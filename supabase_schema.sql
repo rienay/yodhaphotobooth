@@ -13,9 +13,12 @@ CREATE TABLE IF NOT EXISTS public.photobooth_templates (
     is_custom BOOLEAN NOT NULL DEFAULT true,
     enabled BOOLEAN NOT NULL DEFAULT true,
     preset_id TEXT DEFAULT '',
+    photo_boxes JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
+
+ALTER TABLE public.photobooth_templates ADD COLUMN IF NOT EXISTS photo_boxes JSONB;
 
 ALTER TABLE public.photobooth_templates ENABLE ROW LEVEL SECURITY;
 

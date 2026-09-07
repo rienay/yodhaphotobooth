@@ -109,7 +109,7 @@ const LAYOUTS: { id: LayoutId; name: string; rows: number; cols: number; totalPh
 const AUTO_RESET_SECONDS = 60;
 
 /* ───────────────────────── Fullscreen Hook ───────────────────────── */
-function useFullscreen() {
+function useFullscreen(enabled: boolean = false) {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
@@ -118,8 +118,17 @@ function useFullscreen() {
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
 
-  // Auto-fullscreen on first user interaction anywhere on the page
+  // When admin / not in booth mode, ensure we exit fullscreen immediately
   useEffect(() => {
+    if (!enabled && typeof document !== "undefined" && document.fullscreenElement) {
+      document.exitFullscreen().catch(() => { });
+    }
+  }, [enabled]);
+
+  // Auto-fullscreen on first user interaction ONLY when booth mode is enabled
+  useEffect(() => {
+    if (!enabled) return;
+
     const autoFullscreen = () => {
       if (!document.fullscreenElement) {
         document.documentElement.requestFullscreen().catch(() => { });
@@ -134,16 +143,16 @@ function useFullscreen() {
       window.removeEventListener("click", autoFullscreen);
       window.removeEventListener("touchstart", autoFullscreen);
     };
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
+    if (!enabled) return;
+
     const handleAfterPrint = () => {
       // Browser exits fullscreen when print dialog is opened. We restore it immediately.
       if (!document.fullscreenElement) {
         document.documentElement.requestFullscreen()
           .catch(() => {
-            // If the browser blocks immediate entry due to user gesture requirements,
-            // we attach a one-time click/touch listener to restore it on next interaction.
             const restore = () => {
               if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen().catch(() => { });
@@ -161,7 +170,7 @@ function useFullscreen() {
     return () => {
       window.removeEventListener("afterprint", handleAfterPrint);
     };
-  }, []);
+  }, [enabled]);
 
   const toggle = useCallback(() => {
     if (!document.fullscreenElement) {
@@ -244,7 +253,7 @@ function Photobooth() {
   const [photos, setPhotos] = useState<string[]>([]);
   const [liveVideos, setLiveVideos] = useState<string[]>([]);
   const [strip, setStrip] = useState<string | null>(null);
-  const { isFullscreen, toggle: toggleFullscreen } = useFullscreen();
+  const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(isBoothMode);
   const [templates, setTemplates] = useState<Template[]>([]);
 
   const settingsDB = useRef(new SettingsDB()).current;
@@ -341,7 +350,7 @@ function Photobooth() {
   }, [reloadTemplates]);
 
   const ensureFullscreen = () => {
-    if (!document.fullscreenElement) {
+    if (isBoothMode && typeof document !== "undefined" && !document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => { });
     }
   };
@@ -355,6 +364,9 @@ function Photobooth() {
       setExitError("");
       setIsBoothMode(false);
       setIsAdminAuth(true);
+      if (typeof document !== "undefined" && document.fullscreenElement) {
+        document.exitFullscreen().catch(() => { });
+      }
       if (typeof window !== "undefined") {
         window.history.replaceState(null, "", window.location.pathname);
       }
@@ -1254,6 +1266,37 @@ function FilterScreen({
   );
 }
 
+function sortHolesGrid(holes: { left: number; top: number; width: number; height: number }[]) {
+  if (holes.length <= 1) return holes;
+  const sorted = [...holes];
+  sorted.sort((a, b) => {
+    if (Math.abs(a.top - b.top) > 6) {
+      return a.top - b.top;
+    }
+    return a.left - b.left;
+  });
+  return sorted;
+}
+
+function getDefaultDimensionsForLayout(layout?: string): { w: number; h: number } {
+  switch (layout) {
+    case "1x1":
+      return { w: 1000, h: 1250 };
+    case "2x1":
+      return { w: 728, h: 2000 };
+    case "3x1":
+      return { w: 600, h: 1800 };
+    case "2x2":
+      return { w: 1000, h: 1000 };
+    case "3x2":
+      return { w: 1333, h: 2000 };
+    case "4x2":
+      return { w: 1000, h: 1500 };
+    default:
+      return { w: 1000, h: 1500 };
+  }
+}
+
 /* ───────────────────────── Shoot ───────────────────────── */
 
 function ShootScreen({
@@ -1282,7 +1325,11 @@ function ShootScreen({
   const layoutConfig = LAYOUTS.find((l) => l.id === layout) || LAYOUTS[0];
   const total = layoutConfig.totalPhotos;
 
-  const activeTemplate = templates.find(t => t.id === (layout + "_" + variant) || t.id === variant);
+  const activeTemplate =
+    templates.find(t => t.id === (layout + "_" + variant) || t.id === variant || t.presetId === variant) ||
+    templates.find(t => t.layout === layout && t.enabled) ||
+    templates.find(t => t.layout === layout) ||
+    templates[0];
   const effectivePreset = activeTemplate?.presetId || variant;
   const variantConfig = getVariantHoleConfig(layout, effectivePreset);
   // All frames now stored directly in template img field; no legacy fallback needed
@@ -1290,10 +1337,41 @@ function ShootScreen({
 
   const [detectedHoles, setDetectedHoles] = useState<{ left: number; top: number; width: number; height: number }[]>([]);
   const [overlayDimensions, setOverlayDimensions] = useState<{ w: number; h: number } | null>(null);
+  const [hasTransparentHoles, setHasTransparentHoles] = useState(false);
 
   useEffect(() => {
     let active = true;
     async function loadAndDetect() {
+      let dims: { w: number; h: number } | null = null;
+      let hasTransparency = false;
+
+      if (overlaySrc) {
+        try {
+          const img = await loadImg(overlaySrc);
+          if (!active) return;
+          const w = img.naturalWidth || img.width;
+          const h = img.naturalHeight || img.height;
+          if (w && h) {
+            dims = { w, h };
+            setOverlayDimensions(dims);
+          }
+          try {
+            const holes = detectHolesFromImage(img);
+            if (holes.length > 0) {
+              hasTransparency = true;
+            }
+          } catch {}
+        } catch (e) {
+          console.warn("Could not inspect overlay image dimensions:", e);
+        }
+      }
+
+      if (!dims) {
+        dims = getDefaultDimensionsForLayout(layout);
+        setOverlayDimensions(dims);
+      }
+
+      // 1. Photo boxes explicitly defined in template
       if (activeTemplate?.photoBoxes && activeTemplate.photoBoxes.length > 0) {
         const pctHoles = activeTemplate.photoBoxes.map((box) => ({
           left: box.x,
@@ -1301,49 +1379,56 @@ function ShootScreen({
           width: box.w,
           height: box.h,
         }));
-        setDetectedHoles(pctHoles);
-        if (overlaySrc) {
-          try {
-            const img = await loadImg(overlaySrc);
-            if (active) {
-              setOverlayDimensions({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height });
-            }
-          } catch (e) {}
-        }
+        setDetectedHoles(sortHolesGrid(pctHoles));
+        setHasTransparentHoles(hasTransparency);
         return;
       }
 
-      if (!overlaySrc) return;
-      try {
-        const img = await loadImg(overlaySrc);
-        if (!active) return;
-        const holes = detectHolesFromImage(img);
-        if (holes.length > 0) {
-          const w = img.naturalWidth || img.width;
-          const h = img.naturalHeight || img.height;
-          const pctHoles = holes.map(hole => ({
-            left: (hole.x / w) * 100,
-            top: (hole.y / h) * 100,
-            width: (hole.w / w) * 100,
-            height: (hole.h / h) * 100
-          }));
-          setDetectedHoles(pctHoles);
-          setOverlayDimensions({ w, h });
-        } else {
-          setDetectedHoles([]);
-          setOverlayDimensions(null);
-        }
-      } catch (e) {
-        console.error("Failed to detect overlay holes for preview:", e);
-        setDetectedHoles([]);
-        setOverlayDimensions(null);
+      // 2. Transparent holes detected automatically from image
+      if (overlaySrc && dims) {
+        try {
+          const img = await loadImg(overlaySrc);
+          if (!active) return;
+          const holes = detectHolesFromImage(img);
+          if (holes.length > 0) {
+            const w = dims.w;
+            const h = dims.h;
+            const pctHoles = holes.map(hole => ({
+              left: (hole.x / w) * 100,
+              top: (hole.y / h) * 100,
+              width: (hole.w / w) * 100,
+              height: (hole.h / h) * 100
+            }));
+            setDetectedHoles(sortHolesGrid(pctHoles));
+            setHasTransparentHoles(true);
+            return;
+          }
+        } catch {}
       }
+
+      // 3. Preset variant config (legacy presets)
+      if (variantConfig && variantConfig.holes.length > 0) {
+        setDetectedHoles(sortHolesGrid(variantConfig.holes));
+        setHasTransparentHoles(hasTransparency);
+        return;
+      }
+
+      // 4. Default layout boxes fallback (ensures frame holes are ALWAYS present)
+      const defBoxes = getDefaultBoxesForLayout(layout);
+      const pctDef = defBoxes.map(b => ({
+        left: b.x,
+        top: b.y,
+        width: b.w,
+        height: b.h,
+      }));
+      setDetectedHoles(sortHolesGrid(pctDef));
+      setHasTransparentHoles(hasTransparency);
     }
     loadAndDetect();
     return () => {
       active = false;
     };
-  }, [overlaySrc, activeTemplate]);
+  }, [overlaySrc, activeTemplate, layout, variantConfig]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1545,62 +1630,111 @@ function ShootScreen({
 
       {/* ── TOP-RIGHT: Preview strip ── */}
       <div
-        className={`absolute top-4 right-4 z-20 rounded overflow-hidden ${
+        className={`absolute top-4 right-4 z-20 rounded-xl overflow-hidden shadow-2xl border-2 border-black/50 ${
           overlayDimensions && overlayDimensions.w > overlayDimensions.h
             ? "w-48 sm:w-56"
             : layoutConfig.cols === 2
-            ? "w-40"
-            : "w-28"
+            ? "w-36 sm:w-44"
+            : "w-28 sm:w-34"
         }`}
-        style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)", padding: "8px" }}
+        style={{ background: "rgba(10,10,22,0.85)", backdropFilter: "blur(8px)", padding: "8px" }}
       >
-        <div className="pixel text-white text-[9px] text-center mb-2">PRATINJAU</div>
-        <div className="relative">
-          {detectedHoles.length > 0 ? (
-            <div className="relative w-full overflow-hidden" style={{
-              aspectRatio: overlayDimensions ? `${overlayDimensions.w} / ${overlayDimensions.h}` : `${variantConfig?.w || 1} / ${variantConfig?.h || 1}`,
-              background: "#1a1a2e"
-            }}>
-              <img src={overlaySrc} className="absolute inset-0 w-full h-full object-fill pointer-events-none z-20" alt="" />
-              {detectedHoles.map((h, i) => {
-                const photoIndex = layout === "4x2" ? Math.floor(i / 2) : i;
-                return (
-                  <div key={i} className="absolute overflow-hidden z-10 flex items-center justify-center" style={{
-                    left: `${h.left}%`, top: `${h.top}%`, width: `${h.width}%`, height: `${h.height}%`, background: "#2a2a4a"
-                  }}>
-                    {photos[photoIndex] ? <img src={photos[photoIndex]} className="w-full h-full object-cover" style={{ transform: "scaleX(-1)" }} alt="" /> : <span className="pixel text-white opacity-25 text-xs">{photoIndex + 1}</span>}
-                  </div>
-                );
-              })}
-            </div>
-          ) : variantConfig ? (
-            <div className="relative w-full overflow-hidden" style={{ aspectRatio: `${variantConfig.w} / ${variantConfig.h}`, background: "#1a1a2e" }}>
-              <img src={overlaySrc} className="absolute inset-0 w-full h-full object-cover pointer-events-none z-20" alt="" />
-              {variantConfig.holes.map((h, i) => {
-                const photoIndex = layout === "4x2" ? Math.floor(i / 2) : i;
-                return (
-                  <div key={i} className="absolute overflow-hidden z-10 flex items-center justify-center" style={{
-                    left: `${h.left}%`, top: `${h.top}%`, width: `${h.width}%`, height: `${h.height}%`, background: "#2a2a4a"
-                  }}>
-                    {photos[photoIndex] ? <img src={photos[photoIndex]} className="w-full h-full object-cover" style={{ transform: "scaleX(-1)" }} alt="" /> : <span className="pixel text-white opacity-25 text-xs">{photoIndex + 1}</span>}
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className={`grid gap-1 ${layoutConfig.cols === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
-              {[...Array(total)].map((_, i) => (
-                <div key={i} className="aspect-[4/3] flex items-center justify-center overflow-hidden" style={{ background: "#2a2a4a" }}>
-                  {photos[i] ? <img src={photos[i]} className="w-full h-full object-cover" style={{ transform: "scaleX(-1)" }} alt="" /> : <span className="pixel text-white opacity-25 text-xs">{i + 1}</span>}
-                </div>
-              ))}
-            </div>
-          )}
+        <div className="flex items-center justify-between mb-1.5 px-0.5">
+          <span className="pixel text-amber-300 text-[9px] font-bold tracking-wider">PRATINJAU</span>
+          <span className="pixel text-white/70 text-[8px]">{photos.length}/{total}</span>
         </div>
+
+        <div
+          className="relative w-full rounded-lg overflow-hidden border border-white/15 shadow-inner"
+          style={{
+            aspectRatio: overlayDimensions ? `${overlayDimensions.w} / ${overlayDimensions.h}` : "1 / 1.5",
+            background: "#121220",
+          }}
+        >
+          {/* Base Frame Image */}
+          {overlaySrc ? (
+            <img
+              src={overlaySrc}
+              className="absolute inset-0 w-full h-full object-fill pointer-events-none z-0"
+              alt="Bingkai"
+            />
+          ) : null}
+
+          {/* Photo slots */}
+          {detectedHoles.map((h, i) => {
+            const photoIndex = layout === "4x2" ? Math.floor(i / 2) : i;
+            const hasPhoto = Boolean(photos[photoIndex]);
+            const isNext = !hasPhoto && photoIndex === photos.length;
+
+            return (
+              <div
+                key={i}
+                className={`absolute overflow-hidden flex items-center justify-center transition-all ${
+                  isNext
+                    ? "ring-2 ring-amber-400 ring-offset-1 ring-offset-black/40 z-20 animate-pulse"
+                    : "z-10"
+                }`}
+                style={{
+                  left: `${h.left}%`,
+                  top: `${h.top}%`,
+                  width: `${h.width}%`,
+                  height: `${h.height}%`,
+                  background: hasPhoto ? "#000000" : isNext ? "rgba(245, 158, 11, 0.25)" : "rgba(20, 20, 35, 0.65)",
+                  borderRadius: "2px",
+                }}
+              >
+                {hasPhoto ? (
+                  <img
+                    src={photos[photoIndex]}
+                    className="w-full h-full object-cover"
+                    style={{ transform: "scaleX(-1)" }}
+                    alt={`Foto ${photoIndex + 1}`}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-0.5 text-center p-0.5 pointer-events-none select-none">
+                    <span
+                      className="pixel text-[9px] font-bold"
+                      style={{
+                        color: isNext ? "#fde68a" : "rgba(255,255,255,0.45)",
+                        textShadow: "0 1px 2px rgba(0,0,0,0.8)",
+                      }}
+                    >
+                      #{photoIndex + 1}
+                    </span>
+                    {isNext && (
+                      <span className="pixel text-[6px] text-amber-300 font-bold leading-none drop-shadow">
+                        FOTO INI
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Foreground Frame Overlay (if transparent cutouts exist, decorations overlay nicely) */}
+          {overlaySrc && hasTransparentHoles ? (
+            <img
+              src={overlaySrc}
+              className="absolute inset-0 w-full h-full object-fill pointer-events-none z-30"
+              alt="Bingkai Overlay"
+            />
+          ) : null}
+        </div>
+
         {/* Dot indicators */}
         <div className="flex justify-center gap-1.5 mt-2">
           {[...Array(total)].map((_, i) => (
-            <div key={i} className="w-2 h-2 rounded-full" style={{ background: i < photos.length ? "#86efac" : "rgba(255,255,255,0.25)" }} />
+            <div
+              key={i}
+              className={`transition-all ${
+                i < photos.length
+                  ? "w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]"
+                  : i === photos.length
+                  ? "w-2.5 h-2.5 rounded-full bg-amber-400"
+                  : "w-2 h-2 rounded-full bg-white/20"
+              }`}
+            />
           ))}
         </div>
       </div>
@@ -1782,10 +1916,6 @@ function ReviewScreen({
       let stripResult: string;
       if (customImg) {
         stripResult = await composeTemplateFrame(photos, variant, customImg, presetId, layout, activeTemplate?.photoBoxes);
-      } else if (layout === "3x2") {
-        stripResult = await compose3x2Frame(photos, variant, customImg, presetId);
-      } else if (layout === "3x1" && variant !== "default") {
-        stripResult = await compose3x1Variant(photos, variant, customImg, presetId);
       } else if (layout === "2x1" && variant !== "default") {
         stripResult = await compose2x1Variant(photos, variant, customImg, presetId);
       } else {
@@ -1793,9 +1923,15 @@ function ReviewScreen({
       }
 
       await onFinish(stripResult);
-    } catch (e) {
-      console.error("Failed composing strip:", e);
-      alert("Gagal menyusun bingkai foto. Coba lagi.");
+    } catch (e: any) {
+      console.error("Failed composing strip with custom template, using safe fallback:", e);
+      try {
+        const fallbackStrip = await composeStrip(photos, "template", layout);
+        await onFinish(fallbackStrip);
+      } catch (fErr) {
+        console.error("Critical fallback failed:", fErr);
+        alert("Gagal menyusun bingkai foto. Coba lagi.");
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -2641,96 +2777,154 @@ function ResultScreen({
 
 function wait(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-function detectHolesFromImage(frameImg: HTMLImageElement): { x: number; y: number; w: number; h: number }[] {
-  // Scale down to max 400px for speed — holes will be scaled back up
-  const SCALE_MAX = 400;
-  const origW = frameImg.naturalWidth || frameImg.width;
-  const origH = frameImg.naturalHeight || frameImg.height;
-  const scale = Math.min(1, SCALE_MAX / Math.max(origW, origH));
-  const width = Math.round(origW * scale);
-  const height = Math.round(origH * scale);
-
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return [];
-  ctx.drawImage(frameImg, 0, 0, width, height);
-
-  const imgData = ctx.getImageData(0, 0, width, height);
-  const data = imgData.data;
-
-  const isTransparent = new Uint8Array(width * height);
-  for (let i = 0; i < data.length; i += 4) {
-    if (data[i + 3] < 128) {
-      isTransparent[i / 4] = 1;
-    }
+function getDefaultBoxesForLayout(layout?: string): { x: number; y: number; w: number; h: number }[] {
+  switch (layout) {
+    case "1x1":
+      return [{ x: 8, y: 8, w: 84, h: 84 }];
+    case "2x1":
+      return [
+        { x: 10, y: 8, w: 80, h: 40 },
+        { x: 10, y: 52, w: 80, h: 40 },
+      ];
+    case "3x1":
+      return [
+        { x: 10, y: 5, w: 80, h: 27 },
+        { x: 10, y: 36, w: 80, h: 27 },
+        { x: 10, y: 67, w: 80, h: 27 },
+      ];
+    case "2x2":
+      return [
+        { x: 6, y: 6, w: 42, h: 42 },
+        { x: 52, y: 6, w: 42, h: 42 },
+        { x: 6, y: 52, w: 42, h: 42 },
+        { x: 52, y: 52, w: 42, h: 42 },
+      ];
+    case "3x2":
+      return [
+        { x: 6, y: 5, w: 42, h: 27 },
+        { x: 52, y: 5, w: 42, h: 27 },
+        { x: 6, y: 36, w: 42, h: 27 },
+        { x: 52, y: 36, w: 42, h: 27 },
+        { x: 6, y: 67, w: 42, h: 27 },
+        { x: 52, y: 67, w: 42, h: 27 },
+      ];
+    case "4x2":
+      return [
+        { x: 6, y: 4, w: 42, h: 20 },
+        { x: 52, y: 4, w: 42, h: 20 },
+        { x: 6, y: 28, w: 42, h: 20 },
+        { x: 52, y: 28, w: 42, h: 20 },
+        { x: 6, y: 52, w: 42, h: 20 },
+        { x: 52, y: 52, w: 42, h: 20 },
+        { x: 6, y: 76, w: 42, h: 20 },
+        { x: 52, y: 76, w: 42, h: 20 },
+      ];
+    default:
+      return [{ x: 10, y: 10, w: 80, h: 80 }];
   }
+}
 
-  const visited = new Uint8Array(width * height);
-  const holes: { x: number; y: number; w: number; h: number }[] = [];
+function detectHolesFromImage(frameImg: HTMLImageElement): { x: number; y: number; w: number; h: number }[] {
+  try {
+    const SCALE_MAX = 400;
+    const origW = frameImg.naturalWidth || frameImg.width;
+    const origH = frameImg.naturalHeight || frameImg.height;
+    if (!origW || !origH) return [];
+    const scale = Math.min(1, SCALE_MAX / Math.max(origW, origH));
+    const width = Math.round(origW * scale);
+    const height = Math.round(origH * scale);
 
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = y * width + x;
-      if (isTransparent[idx] && !visited[idx]) {
-        let minX = x, maxX = x;
-        let minY = y, maxY = y;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return [];
+    ctx.drawImage(frameImg, 0, 0, width, height);
 
-        const queue: [number, number][] = [[x, y]];
-        visited[idx] = 1;
+    let imgData: ImageData;
+    try {
+      imgData = ctx.getImageData(0, 0, width, height);
+    } catch (taintErr) {
+      console.warn("Could not read image data from frame (CORS/tainted):", taintErr);
+      return [];
+    }
+    const data = imgData.data;
 
-        let head = 0;
-        while (head < queue.length) {
-          const [cx, cy] = queue[head++];
+    const isTransparent = new Uint8Array(width * height);
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] < 128) {
+        isTransparent[i / 4] = 1;
+      }
+    }
 
-          if (cx < minX) minX = cx;
-          if (cx > maxX) maxX = cx;
-          if (cy < minY) minY = cy;
-          if (cy > maxY) maxY = cy;
+    const visited = new Uint8Array(width * height);
+    const holes: { x: number; y: number; w: number; h: number }[] = [];
 
-          const neighbors = [
-            [cx + 1, cy],
-            [cx - 1, cy],
-            [cx, cy + 1],
-            [cx, cy - 1]
-          ];
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = y * width + x;
+        if (isTransparent[idx] && !visited[idx]) {
+          let minX = x, maxX = x;
+          let minY = y, maxY = y;
 
-          for (const [nx, ny] of neighbors) {
-            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-              const nidx = ny * width + nx;
-              if (isTransparent[nidx] && !visited[nidx]) {
-                visited[nidx] = 1;
-                queue.push([nx, ny]);
+          const queue: [number, number][] = [[x, y]];
+          visited[idx] = 1;
+
+          let head = 0;
+          while (head < queue.length) {
+            const [cx, cy] = queue[head++];
+
+            if (cx < minX) minX = cx;
+            if (cx > maxX) maxX = cx;
+            if (cy < minY) minY = cy;
+            if (cy > maxY) maxY = cy;
+
+            const neighbors = [
+              [cx + 1, cy],
+              [cx - 1, cy],
+              [cx, cy + 1],
+              [cx, cy - 1]
+            ];
+
+            for (const [nx, ny] of neighbors) {
+              if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                const nidx = ny * width + nx;
+                if (isTransparent[nidx] && !visited[nidx]) {
+                  visited[nidx] = 1;
+                  queue.push([nx, ny]);
+                }
               }
             }
           }
-        }
 
-        const w = maxX - minX + 1;
-        const h = maxY - minY + 1;
-        const area = w * h;
-        if (w >= width * 0.10 && h >= height * 0.04 && area >= (width * height) * 0.012 && w < width * 0.98 && h < height * 0.98) {
-          // Scale back up to original resolution
-          holes.push({
-            x: Math.round(minX / scale),
-            y: Math.round(minY / scale),
-            w: Math.round(w / scale),
-            h: Math.round(h / scale)
-          });
+          const w = maxX - minX + 1;
+          const h = maxY - minY + 1;
+          const area = w * h;
+          if (w >= width * 0.10 && h >= height * 0.04 && area >= (width * height) * 0.012 && w < width * 0.98 && h < height * 0.98) {
+            // Scale back up to original resolution
+            holes.push({
+              x: Math.round(minX / scale),
+              y: Math.round(minY / scale),
+              w: Math.round(w / scale),
+              h: Math.round(h / scale)
+            });
+          }
         }
       }
     }
+
+    holes.sort((a, b) => {
+      if (Math.abs(a.y - b.y) > 20) {
+        return a.y - b.y;
+      }
+      return a.x - b.x;
+    });
+
+    return holes;
+  } catch (err) {
+    console.warn("detectHolesFromImage failed gracefully:", err);
+    return [];
   }
-
-  holes.sort((a, b) => {
-    if (Math.abs(a.y - b.y) > 20) {
-      return a.y - b.y;
-    }
-    return a.x - b.x;
-  });
-
-  return holes;
 }
 
 async function composeTemplateFrame(
@@ -2746,8 +2940,8 @@ async function composeTemplateFrame(
   if (!customImg) throw new Error("Template image is missing!");
   const frameImg = await loadImg(customImg);
 
-  const FRAME_W = frameImg.width;
-  const FRAME_H = frameImg.height;
+  const FRAME_W = frameImg.naturalWidth || frameImg.width || 1200;
+  const FRAME_H = frameImg.naturalHeight || frameImg.height || 1800;
 
   const canvas = document.createElement("canvas");
   canvas.width = FRAME_W;
@@ -2769,57 +2963,46 @@ async function composeTemplateFrame(
       h: (box.h / 100) * FRAME_H,
     }));
   } else {
-    holes = detectHolesFromImage(frameImg);
+    try {
+      holes = detectHolesFromImage(frameImg);
+    } catch {
+      holes = [];
+    }
   }
 
-  if (holes.length > 0) {
-    // Draw each photo into its corresponding detected hole
-    for (let i = 0; i < holes.length; i++) {
-      const photoIndex = layout === "4x2" ? Math.floor(i / 2) : i;
-      if (!photos[photoIndex]) break;
-      const hole = holes[i];
-      try {
-        const img = await loadImg(photos[photoIndex]);
-        const holeRatio = hole.w / hole.h;
-        const imgRatio = img.width / img.height;
-        let sx = 0, sy = 0, sw = img.width, sh = img.height;
-        if (imgRatio > holeRatio) {
-          sw = img.height * holeRatio;
-          sx = (img.width - sw) / 2;
-        } else {
-          sh = img.width / holeRatio;
-          sy = (img.height - sh) / 2;
-        }
-        ctx.drawImage(img, sx, sy, sw, sh, hole.x, hole.y, hole.w, hole.h);
-      } catch (e) {
-        console.error(`Gagal menggambar foto ${i} pada hole`, e);
-        ctx.fillStyle = "#0D3B59";
-        ctx.fillRect(hole.x, hole.y, hole.w, hole.h);
+  // If no holes detected, fall back to default layout boxes so composition NEVER fails!
+  if (holes.length === 0) {
+    const defBoxes = getDefaultBoxesForLayout(layout);
+    holes = defBoxes.map((b) => ({
+      x: (b.x / 100) * FRAME_W,
+      y: (b.y / 100) * FRAME_H,
+      w: (b.w / 100) * FRAME_W,
+      h: (b.h / 100) * FRAME_H,
+    }));
+  }
+
+  // Draw each photo into its corresponding hole
+  for (let i = 0; i < holes.length; i++) {
+    const photoIndex = layout === "4x2" ? Math.floor(i / 2) : i;
+    if (!photos[photoIndex]) break;
+    const hole = holes[i];
+    try {
+      const img = await loadImg(photos[photoIndex]);
+      const holeRatio = hole.w / hole.h;
+      const imgRatio = img.width / img.height;
+      let sx = 0, sy = 0, sw = img.width, sh = img.height;
+      if (imgRatio > holeRatio) {
+        sw = img.height * holeRatio;
+        sx = (img.width - sw) / 2;
+      } else {
+        sh = img.width / holeRatio;
+        sy = (img.height - sh) / 2;
       }
-    }
-  } else {
-    // Fallback: draw photos[0] over the entire background if no holes are detected
-    if (photos.length > 0) {
-      try {
-        const img = await loadImg(photos[0]);
-        const holeRatio = FRAME_W / FRAME_H;
-        const imgRatio = img.width / img.height;
-        let sx = 0, sy = 0, sw = img.width, sh = img.height;
-        if (imgRatio > holeRatio) {
-          sw = img.height * holeRatio;
-          sx = (img.width - sw) / 2;
-        } else {
-          sh = img.width / holeRatio;
-          sy = (img.height - sh) / 2;
-        }
-        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, FRAME_W, FRAME_H);
-      } catch (e) {
-        ctx.fillStyle = "#0D3B59";
-        ctx.fillRect(0, 0, FRAME_W, FRAME_H);
-      }
-    } else {
+      ctx.drawImage(img, sx, sy, sw, sh, hole.x, hole.y, hole.w, hole.h);
+    } catch (e) {
+      console.error(`Gagal menggambar foto ${i} pada hole`, e);
       ctx.fillStyle = "#0D3B59";
-      ctx.fillRect(0, 0, FRAME_W, FRAME_H);
+      ctx.fillRect(hole.x, hole.y, hole.w, hole.h);
     }
   }
 
@@ -3257,11 +3440,48 @@ async function composeStrip(
   return canvas.toDataURL("image/png");
 }
 
-function loadImg(src: string): Promise<HTMLImageElement> {
+async function loadImg(src: string): Promise<HTMLImageElement> {
+  if (!src) throw new Error("Image source is empty!");
+
+  // If remote HTTP/HTTPS, fetch blob first to guarantee canvas is never tainted
+  if (src.startsWith("http://") || src.startsWith("https://")) {
+    try {
+      const resp = await fetch(src, { mode: "cors" });
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+            resolve(img);
+          };
+          img.onerror = (e) => reject(e);
+          img.src = blobUrl;
+        });
+      }
+    } catch (fetchErr) {
+      console.warn("fetch blob fallback for loadImg:", fetchErr);
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const img = new Image();
+    if (!src.startsWith("data:") && !src.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.onload = () => resolve(img);
-    img.onerror = reject;
+    img.onerror = () => {
+      // If anonymous fails, try loading directly
+      if (img.crossOrigin) {
+        const fallback = new Image();
+        fallback.onload = () => resolve(fallback);
+        fallback.onerror = (e) => reject(e);
+        fallback.src = src;
+      } else {
+        reject(new Error("Gagal memuat gambar: " + src.slice(0, 50)));
+      }
+    };
     img.src = src;
   });
 }

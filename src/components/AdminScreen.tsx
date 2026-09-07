@@ -265,6 +265,11 @@ export function AdminScreen({
 
   // Load initial data
   useEffect(() => {
+    // Admin screen should never be in fullscreen mode
+    if (typeof document !== "undefined" && document.fullscreenElement) {
+      document.exitFullscreen().catch(() => { });
+    }
+
     // Media devices
     navigator.mediaDevices?.getUserMedia?.({ video: true })
       .then((stream) => {
@@ -871,104 +876,145 @@ export function AdminScreen({
     reader.readAsDataURL(file);
   };
 
-  // ── Auto-Scan & Erase Background (Deteksi & Hapus Otomatis) ───────────
-  const handleAutoScanErase = () => {
-    if (!workingCanvasRef.current || !activeCanvasData) return;
-    const canvas = workingCanvasRef.current;
+  // Strictly bounded erase inside a single photo box — CANNOT touch background or artwork outside box
+  const boundedEraseInsideBox = (
+    canvas: HTMLCanvasElement,
+    box: PhotoBox,
+    tolerance: number
+  ) => {
+    const width = canvas.width;
+    const height = canvas.height;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
 
-    // Save history for Undo
-    setHistoryStack((prev) => [...prev.slice(-14), activeCanvasData]);
-    setRedoStack([]);
+    // Pixel bounds of the box
+    const bx = Math.max(0, Math.min(width - 1, Math.round((box.x / 100) * width)));
+    const by = Math.max(0, Math.min(height - 1, Math.round((box.y / 100) * height)));
+    const bw = Math.max(1, Math.min(width - bx, Math.round((box.w / 100) * width)));
+    const bh = Math.max(1, Math.min(height - by, Math.round((box.h / 100) * height)));
 
-    const width = canvas.width;
-    const height = canvas.height;
-    let erasedCount = 0;
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
 
-    const isTargetColor = (r: number, g: number, b: number, a: number) => {
-      if (a < 100) return false;
-      // White / off-white
-      if (r > 220 && g > 220 && b > 220) return true;
-      // Green screen
-      if (g > 180 && r < 120 && b < 120) return true;
-      // Close to chromaColor
-      const { r: tr, g: tg, b: tb } = hexToRgb(chromaColor);
-      const dist = Math.sqrt((r - tr) ** 2 + (g - tg) ** 2 + (b - tb) ** 2);
-      if (dist <= (chromaTolerance / 100) * 441.67) return true;
-      return false;
-    };
+    // Sample box center
+    const cx = Math.floor(bx + bw / 2);
+    const cy = Math.floor(by + bh / 2);
+    const centerIdx = (cy * width + cx) * 4;
 
-    // Phase 1: Check centers and interior points of all existing photoBoxes
-    if (photoBoxes.length > 0) {
-      photoBoxes.forEach((box) => {
-        const offsets = [
-          [0.5, 0.5],
-          [0.35, 0.35],
-          [0.65, 0.65],
-          [0.5, 0.3],
-          [0.5, 0.7],
+    const sr = data[centerIdx];
+    const sg = data[centerIdx + 1];
+    const sb = data[centerIdx + 2];
+    const sa = data[centerIdx + 3];
+
+    const maxDist = 441.67;
+    const threshold = (tolerance / 100) * maxDist;
+
+    // Is center pixel a valid candidate (white, near white, light gray, or chroma)?
+    const isCenterTarget =
+      sa > 40 &&
+      ((sr > 190 && sg > 190 && sb > 190) ||
+        (sg > 160 && sr < 140 && sb < 140) ||
+        Math.sqrt((sr - hexToRgb(chromaColor).r) ** 2 + (sg - hexToRgb(chromaColor).g) ** 2 + (sb - hexToRgb(chromaColor).b) ** 2) <= threshold);
+
+    if (sa > 0 && isCenterTarget) {
+      const visited = new Uint8Array(width * height);
+      const queue = new Int32Array(bw * bh * 2);
+      let head = 0;
+      let tail = 0;
+
+      queue[tail++] = cx;
+      queue[tail++] = cy;
+      visited[cy * width + cx] = 1;
+
+      while (head < tail) {
+        const px = queue[head++];
+        const py = queue[head++];
+        const idx = (py * width + px) * 4;
+
+        data[idx + 3] = 0; // Erase to transparent
+
+        const neighbors = [
+          px + 1, py,
+          px - 1, py,
+          px, py + 1,
+          px, py - 1,
         ];
 
-        for (const [ox, oy] of offsets) {
-          const sx = Math.floor(((box.x + box.w * ox) / 100) * width);
-          const sy = Math.floor(((box.y + box.h * oy) / 100) * height);
-          if (sx < 0 || sx >= width || sy < 0 || sy >= height) continue;
+        for (let i = 0; i < 8; i += 2) {
+          const nx = neighbors[i];
+          const ny = neighbors[i + 1];
 
-          const p = ctx.getImageData(sx, sy, 1, 1).data;
-          if (isTargetColor(p[0], p[1], p[2], p[3])) {
-            floodFillErase(canvas, sx, sy, chromaTolerance);
-            erasedCount++;
-            break;
+          // STRICT CLAMP TO BOX BOUNDS ONLY: NEVER TOUCH ANYTHING OUTSIDE!
+          if (nx >= bx && nx < bx + bw && ny >= by && ny < by + bh) {
+            const pIdx = ny * width + nx;
+            if (!visited[pIdx]) {
+              visited[pIdx] = 1;
+              const nDataIdx = pIdx * 4;
+              const na = data[nDataIdx + 3];
+
+              if (na > 0) {
+                const nr = data[nDataIdx];
+                const ng = data[nDataIdx + 1];
+                const nb = data[nDataIdx + 2];
+
+                const dr = nr - sr;
+                const dg = ng - sg;
+                const db = nb - sb;
+                const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+
+                if (dist <= threshold) {
+                  queue[tail++] = nx;
+                  queue[tail++] = ny;
+                }
+              }
+            }
           }
         }
-      });
-    }
-
-    // Phase 2: If few boxes were erased, scan grid candidate points across inner canvas
-    if (erasedCount < (photoBoxes.length || 2)) {
-      const xSteps = 10;
-      const ySteps = 14;
-      for (let yi = 1; yi < ySteps; yi++) {
-        for (let xi = 1; xi < xSteps; xi++) {
-          const gx = Math.floor((xi / xSteps) * width);
-          const gy = Math.floor((yi / ySteps) * height);
-
-          // Avoid outer 6% canvas border to keep frame edges safe
-          if (gx < width * 0.06 || gx > width * 0.94 || gy < height * 0.06 || gy > height * 0.94) continue;
-
-          const p = ctx.getImageData(gx, gy, 1, 1).data;
-          if (isTargetColor(p[0], p[1], p[2], p[3])) {
-            // Verify it's a solid block of at least 8px
-            const pR = ctx.getImageData(Math.min(width - 1, gx + 6), gy, 1, 1).data;
-            const pD = ctx.getImageData(gx, Math.min(height - 1, gy + 6), 1, 1).data;
-            if (isTargetColor(pR[0], pR[1], pR[2], pR[3]) && isTargetColor(pD[0], pD[1], pD[2], pD[3])) {
-              floodFillErase(canvas, gx, gy, chromaTolerance);
-              erasedCount++;
+      }
+    } else {
+      // Safe punch of white / light chroma pixels inside the box (preserving 2% outer frame rim)
+      const insetX = Math.max(1, Math.round(bw * 0.02));
+      const insetY = Math.max(1, Math.round(bh * 0.02));
+      for (let y = by + insetY; y < by + bh - insetY; y++) {
+        for (let x = bx + insetX; x < bx + bw - insetX; x++) {
+          const idx = (y * width + x) * 4;
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          const a = data[idx + 3];
+          if (a > 0) {
+            if ((r > 195 && g > 195 && b > 195) || (g > 150 && r < 140 && b < 140)) {
+              data[idx + 3] = 0;
             }
           }
         }
       }
     }
 
+    ctx.putImageData(imgData, 0, 0);
+  };
+
+  // ── Auto-Scan & Erase Background (Deteksi & Hapus Otomatis) ───────────
+  const handleAutoScanErase = () => {
+    if (!workingCanvasRef.current || !activeCanvasData) return;
+    const canvas = workingCanvasRef.current;
+
+    // Save history for Undo
+    setHistoryStack((prev) => [...prev.slice(-14), activeCanvasData]);
+    setRedoStack([]);
+
+    const targetBoxes = photoBoxes.length > 0 ? photoBoxes : getDefaultBoxesForLayout(newLayout);
+
+    targetBoxes.forEach((box) => {
+      boundedEraseInsideBox(canvas, box, chromaTolerance);
+    });
+
     const finalData = canvas.toDataURL("image/png");
     setActiveCanvasData(finalData);
     const holes = detectHolesFromCanvas(canvas);
     applyHolesToLayout(holes);
 
-    if (holes.length > 0) {
-      const newBoxes: PhotoBox[] = holes.map((h, i) => ({
-        id: `box_${i + 1}`,
-        x: Math.round((h.x / width) * 1000) / 10,
-        y: Math.round((h.y / height) * 1000) / 10,
-        w: Math.round((h.w / width) * 1000) / 10,
-        h: Math.round((h.h / height) * 1000) / 10,
-      }));
-      setPhotoBoxes(newBoxes);
-      setSelectedBoxId(newBoxes[0]?.id || null);
-    }
-
-    setActionStatus(`✨ Scan otomatis selesai! Berhasil melubangi ${holes.length > 0 ? holes.length : erasedCount} area bingkai foto.`);
+    setActionStatus(`✨ Scan otomatis selesai! Berhasil melubangi area ${targetBoxes.length} kotak foto tanpa merusak background bingkai.`);
   };
 
   // 1-Click: Erase White Photo Boxes
@@ -2582,18 +2628,30 @@ export function AdminScreen({
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={handleAddBox}
-                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Tambah Kotak</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        {photoBoxes.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handlePunchAllBoxes}
+                            className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                            title="Lubangi semua kotak foto agar transparan 100%"
+                          >
+                            <span>✂️ Lubangi Semua</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleAddBox}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Tambah Kotak</span>
+                        </button>
+                      </div>
                     </div>
 
                     <p className="text-[11px] text-indigo-900/80 bg-white/80 p-2 rounded-lg border border-indigo-100 leading-relaxed">
-                      💡 <strong>Catatan:</strong> Kotak ini hanya sebagai penanda (slot) posisi foto pengunjung di booth. Kotak ini <u>tidak memotong</u> atau merusak hiasan bingkai Anda.
+                      💡 <strong>Catatan:</strong> Kotak ini menandai area foto pengunjung. Anda juga dapat menekan <strong>Lubangi Kotak</strong> di bawah untuk membuat area foto di dalam kotak 100% transparan tanpa merusak background bingkai.
                     </p>
 
                     {/* Box Selector Pills */}
@@ -2625,11 +2683,11 @@ export function AdminScreen({
                           })}
                         </div>
 
-                        {/* Selected Box Controls: Ratio Presets & Delete */}
-                        <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                        {/* Selected Box Controls: Ratio Presets, Hole Punch & Delete */}
+                        <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2.5">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-bold text-slate-800">
-                              Atur Rasio untuk Kotak #{photoBoxes.findIndex((b) => b.id === (selectedBoxId || photoBoxes[0]?.id)) + 1}:
+                              Atur Kotak #{photoBoxes.findIndex((b) => b.id === (selectedBoxId || photoBoxes[0]?.id)) + 1}:
                             </span>
                             {photoBoxes.length > 1 && (
                               <button
@@ -2656,6 +2714,17 @@ export function AdminScreen({
                               </button>
                             ))}
                           </div>
+
+                          {/* 1-Click Clean Punch for This Box */}
+                          <button
+                            type="button"
+                            onClick={handlePunchSelectedBox}
+                            className="w-full py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                            title="Lubangi bagian dalam kotak ini menjadi transparan 100%"
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>✂️ Lubangi Bersih Kotak Ini (100% Transparan)</span>
+                          </button>
                         </div>
                       </div>
                     ) : (

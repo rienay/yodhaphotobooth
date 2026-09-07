@@ -123,6 +123,7 @@ export class TemplateDB {
             isCustom: true,
             enabled: item.enabled ?? true,
             presetId: item.preset_id ?? "",
+            photoBoxes: item.photo_boxes || item.photoBoxes || undefined,
           }));
 
           // Sync back to local IndexedDB for fast cache / offline support
@@ -158,7 +159,7 @@ export class TemplateDB {
           finalImgUrl = await uploadToStorage(template.img, path, "image/png");
         }
 
-        const payload = {
+        const payload: any = {
           id: template.id,
           name: template.name,
           layout: template.layout,
@@ -166,12 +167,21 @@ export class TemplateDB {
           is_custom: true,
           enabled: template.enabled,
           preset_id: template.presetId || "",
+          photo_boxes: template.photoBoxes || null,
           updated_at: new Date().toISOString(),
         };
 
-        const { error } = await supabase
+        let { error } = await supabase
           .from("photobooth_templates")
           .upsert(payload, { onConflict: "id" });
+
+        if (error && error.message?.includes("photo_boxes")) {
+          delete payload.photo_boxes;
+          const retry = await supabase
+            .from("photobooth_templates")
+            .upsert(payload, { onConflict: "id" });
+          error = retry.error;
+        }
 
         if (error) {
           console.warn("Supabase saveTemplate error:", error.message);

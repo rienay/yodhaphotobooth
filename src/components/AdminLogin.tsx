@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import yodhaLogo from "@/assets/yodha.png";
 import { verifyAndLoginAdmin } from "@/lib/auth";
 
@@ -10,6 +10,12 @@ export function AdminLogin({ onLoginSuccess }: AdminLoginProps) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof document !== "undefined" && document.fullscreenElement) {
+      document.exitFullscreen().catch(() => { });
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
