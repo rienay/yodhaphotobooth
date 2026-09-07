@@ -17,7 +17,8 @@ function loadImg(src: string): Promise<HTMLImageElement> {
 export async function generateGifFromPhotos(
   photos: string[],
   maxDimension = 640,
-  delay = 500
+  delay = 500,
+  targetDurationMs = 12000 // 12 seconds total duration
 ): Promise<string> {
   if (!photos || photos.length === 0) {
     throw new Error("No photos to generate GIF");
@@ -50,6 +51,8 @@ export async function generateGifFromPhotos(
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("Canvas context could not be created");
 
+  // Pre-process each photo frame once
+  const processedFrames = [];
   for (let i = 0; i < photos.length; i++) {
     const img = i === 0 ? firstImg : await loadImg(photos[i]);
     ctx.clearRect(0, 0, width, height);
@@ -60,7 +63,21 @@ export async function generateGifFromPhotos(
     const imgData = ctx.getImageData(0, 0, width, height);
     const palette = quantize(imgData.data, 256);
     const index = applyPalette(imgData.data, palette);
-    gif.writeFrame(index, width, height, { palette, delay });
+    processedFrames.push({ index, palette });
+  }
+
+  // Calculate repeats needed to reach 12 seconds
+  const oneCycleDuration = processedFrames.length * delay;
+  const repeats = Math.max(1, Math.round(targetDurationMs / oneCycleDuration));
+
+  // Write repeated frames to make a 12-second looping GIF
+  for (let r = 0; r < repeats; r++) {
+    for (let i = 0; i < processedFrames.length; i++) {
+      gif.writeFrame(processedFrames[i].index, width, height, {
+        palette: processedFrames[i].palette,
+        delay,
+      });
+    }
   }
 
   gif.finish();

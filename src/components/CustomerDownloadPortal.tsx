@@ -16,7 +16,13 @@ import {
 } from "lucide-react";
 import yodhaLogo from "@/assets/yodha.png";
 import { generateGifFromPhotos } from "@/lib/gif";
-import { detectHolesFromImage, loadImg, composeLiveVideoFrame } from "@/lib/frameLive";
+import {
+  detectHolesFromImage,
+  loadImg,
+  composeLiveVideoFrame,
+  composeLiveGifFrame,
+  generate12sGifFromVideo,
+} from "@/lib/frameLive";
 
 interface CustomerDownloadPortalProps {
   sessionCode: string;
@@ -585,7 +591,9 @@ function FramedLiveView({
   const [holes, setHoles] = useState<{ left: number; top: number; width: number; height: number }[]>([]);
   const [frameAspect, setFrameAspect] = useState<number>(2 / 3);
   const [isComposing, setIsComposing] = useState(false);
+  const [isComposingGif, setIsComposingGif] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState("");
+  const [singleGifLoadingIdx, setSingleGifLoadingIdx] = useState<number | null>(null);
 
   const templateSrc = session.template_url || "";
 
@@ -673,8 +681,53 @@ function FramedLiveView({
     };
   }, [templateSrc, session.layout]);
 
+  // Download Framed Live GIF (12 Seconds Loop)
+  const handleDownloadFramedGif = async () => {
+    if (isComposingGif) return;
+    setIsComposingGif(true);
+    setDownloadProgress("Menyiapkan GIF 12 detik (4x loop)...");
+    try {
+      const targetTemplate = session.template_url || session.strip_url;
+      const gifDataUrl = await composeLiveGifFrame(
+        targetTemplate,
+        liveVideos,
+        session.layout || "4x2",
+        420,
+        8,
+        4 // 3s x 4 repeats = 12 seconds!
+      );
+      if (gifDataUrl) {
+        triggerDownload(gifDataUrl, `${session.session_code}_live_12s_loop.gif`);
+      } else {
+        alert("Gagal merender GIF berbingkai di browser ini.");
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert("Gagal merender GIF: " + (e?.message || "Format tidak didukung"));
+    } finally {
+      setIsComposingGif(false);
+      setDownloadProgress("");
+    }
+  };
+
+  // Download Single Pose 12-second GIF
+  const handleDownloadSingleGif = async (vUrl: string, idx: number) => {
+    if (singleGifLoadingIdx !== null) return;
+    setSingleGifLoadingIdx(idx);
+    try {
+      const gifDataUrl = await generate12sGifFromVideo(vUrl, 440, 8, 4);
+      if (gifDataUrl) {
+        triggerDownload(gifDataUrl, `${session.session_code}_pose_${idx + 1}_12s.gif`);
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert("Gagal membuat GIF: " + (e?.message || "Format video tidak didukung"));
+    } finally {
+      setSingleGifLoadingIdx(null);
+    }
+  };
+
   const handleDownloadFramedVideo = async () => {
-    // If pre-generated framed video is in session.live_photo_url and ends with .webm/.mp4
     if (
       session.live_photo_url &&
       (session.live_photo_url.includes(".webm") || session.live_photo_url.includes(".mp4"))
@@ -683,10 +736,9 @@ function FramedLiveView({
       return;
     }
 
-    // Otherwise, generate client-side composite
     if (isComposing) return;
     setIsComposing(true);
-    setDownloadProgress("Merender video frame live 3 detik...");
+    setDownloadProgress("Merender video frame live...");
     try {
       const targetTemplate = session.template_url || session.strip_url;
       const compositeUrl = await composeLiveVideoFrame(targetTemplate, liveVideos, session.layout || "4x2");
@@ -761,45 +813,85 @@ function FramedLiveView({
       </div>
 
       {/* Action Buttons */}
-      <div className="w-full space-y-2">
+      <div className="w-full space-y-2.5">
+        {/* 1. Main Action: Download 12-Second Framed GIF (Repeated 4x) */}
+        <button
+          onClick={handleDownloadFramedGif}
+          disabled={isComposingGif || isComposing}
+          className="w-full py-3.5 px-4 bg-gradient-to-r from-purple-600 via-pink-600 to-amber-500 hover:from-purple-500 hover:to-amber-400 text-white rounded-xl text-xs font-black shadow-lg shadow-purple-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 hover:scale-[1.01] active:scale-[0.99]"
+        >
+          {isComposingGif ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <span>{downloadProgress || "Merender GIF 12 detik..."}</span>
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+              <span>Unduh Foto Live Frame GIF (12 Detik Loop)</span>
+            </>
+          )}
+        </button>
+
+        {/* 2. Download Framed Video */}
         <button
           onClick={handleDownloadFramedVideo}
-          disabled={isComposing}
-          className="w-full py-3 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+          disabled={isComposing || isComposingGif}
+          className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-bold shadow flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 border border-slate-700"
         >
           {isComposing ? (
             <>
-              <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+              <div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-transparent rounded-full animate-spin" />
               <span>{downloadProgress || "Sedang memproses..."}</span>
             </>
           ) : (
             <>
-              <Download className="w-4 h-4" />
+              <Download className="w-3.5 h-3.5" />
               <span>Unduh Video Frame Live (.webm / .mp4)</span>
             </>
           )}
         </button>
 
         <p className="text-[10px] text-slate-400 text-center">
-          Video 3 detik setiap gaya bergerak serentak di dalam bingkai foto!
+          Foto live 3 detik diulang 4 kali menjadi animasi GIF 12 detik yang bergerak mulus.
         </p>
 
-        {/* Download Individual 3s Clips */}
+        {/* 3. Download Individual 12s GIF & 3s Video per pose */}
         <div className="pt-3 border-t border-slate-800 space-y-2">
           <div className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
             <Film className="w-3.5 h-3.5 text-amber-400" />
-            <span>Unduh Klip Video 3 Detik Per Gaya:</span>
+            <span>Unduh Klip Per Gaya (GIF 12 Detik / Video 3s):</span>
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1.5">
             {liveVideos.map((vUrl, idx) => (
-              <button
+              <div
                 key={idx}
-                onClick={() => triggerDownload(vUrl, `${session.session_code}_pose_${idx + 1}_3s.webm`)}
-                className="py-2 px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] font-semibold flex items-center justify-between transition-colors cursor-pointer border border-slate-700/60"
+                className="p-2 bg-slate-800/80 rounded-xl flex items-center justify-between gap-2 border border-slate-700/60"
               >
-                <span>Gaya #{idx + 1} (3s)</span>
-                <Download className="w-3 h-3 text-amber-400" />
-              </button>
+                <span className="text-[11px] font-bold text-slate-200">Gaya #{idx + 1}</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => handleDownloadSingleGif(vUrl, idx)}
+                    disabled={singleGifLoadingIdx === idx}
+                    className="py-1 px-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {singleGifLoadingIdx === idx ? (
+                      <div className="w-2.5 h-2.5 border border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Sparkles className="w-2.5 h-2.5 text-amber-300" />
+                    )}
+                    <span>GIF (12s)</span>
+                  </button>
+
+                  <button
+                    onClick={() => triggerDownload(vUrl, `${session.session_code}_pose_${idx + 1}_3s.webm`)}
+                    className="py-1 px-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-[10px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <Download className="w-2.5 h-2.5" />
+                    <span>Video (3s)</span>
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
         </div>

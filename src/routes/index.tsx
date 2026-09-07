@@ -6,7 +6,7 @@ import { AdminLogin } from "@/components/AdminLogin";
 import { TemplateDB, CustomTemplate, SessionDB, SettingsDB } from "@/lib/db";
 import { isSupabaseConfigured, uploadToStorage, getSupabaseAnonKey, getSupabaseUrl } from "@/lib/supabase";
 import { generateGifFromPhotos } from "@/lib/gif";
-import { recordLiveClip, composeLiveVideoFrame } from "@/lib/frameLive";
+import { recordLiveClip, composeLiveVideoFrame, composeLiveGifFrame } from "@/lib/frameLive";
 import {
   isAdminAuthenticated,
   isBoothAccessAllowed,
@@ -2093,10 +2093,25 @@ function ResultScreen({
             }
           }
 
-          // Generate & upload GIF
+          // Generate & upload GIF (12 seconds looping)
           try {
             if (active) setUploadStatus("generating_gif");
-            const gifBase64 = await generateGifFromPhotos(photos);
+            let gifBase64: string | undefined = undefined;
+
+            // If live videos exist, create 12-second framed live GIF
+            if (liveVideos && liveVideos.length > 0 && overlaySrc) {
+              try {
+                gifBase64 = await composeLiveGifFrame(overlaySrc, liveVideos, layout, 400, 8, 4);
+              } catch (flgErr) {
+                console.warn("Framed live GIF generation warning, fallback to photos:", flgErr);
+              }
+            }
+
+            // Fallback: generate 12-second GIF from photos
+            if (!gifBase64) {
+              gifBase64 = await generateGifFromPhotos(photos, 640, 500, 12000);
+            }
+
             if (gifBase64) {
               const gifPath = `photos/${sessionCode}_animated.gif`;
               try {
