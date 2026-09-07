@@ -1313,6 +1313,59 @@ export function AdminScreen({
     setActionStatus(`Kotak foto dihapus.`);
   };
 
+  // Adjust spacing (gap) between photo boxes
+  const handleAdjustBoxSpacing = (delta: number) => {
+    if (photoBoxes.length <= 1) return;
+    setPhotoBoxes((prev) => {
+      const sorted = [...prev].sort((a, b) => a.y - b.y);
+      return prev.map((box) => {
+        const orderIdx = sorted.findIndex((s) => s.id === box.id);
+        const centerOffset = orderIdx - (sorted.length - 1) / 2;
+        const newY = Math.max(1, Math.min(99 - box.h, box.y + centerOffset * delta));
+        return {
+          ...box,
+          y: Math.round(newY * 10) / 10,
+        };
+      });
+    });
+    setActionStatus(delta < 0 ? "Jarak antar kotak foto dirapatkan." : "Jarak antar kotak foto direnggangkan.");
+  };
+
+  // Center all boxes vertically on the frame
+  const handleCenterAllBoxes = () => {
+    if (photoBoxes.length === 0) return;
+    setPhotoBoxes((prev) => {
+      const minY = Math.min(...prev.map((b) => b.y));
+      const maxY = Math.max(...prev.map((b) => b.y + b.h));
+      const totalSpan = maxY - minY;
+      const targetMinY = Math.max(2, (100 - totalSpan) / 2);
+      const shift = targetMinY - minY;
+      return prev.map((box) => ({
+        ...box,
+        y: Math.round(Math.max(1, Math.min(99 - box.h, box.y + shift)) * 10) / 10,
+      }));
+    });
+    setActionStatus("Posisi kotak foto dipusatkan secara vertikal.");
+  };
+
+  // Nudge selected box position
+  const handleNudgeSelectedBox = (dx: number, dy: number) => {
+    const targetId = selectedBoxId || photoBoxes[0]?.id;
+    if (!targetId) return;
+    setPhotoBoxes((prev) =>
+      prev.map((box) => {
+        if (box.id !== targetId) return box;
+        const newX = Math.max(0, Math.min(100 - box.w, box.x + dx));
+        const newY = Math.max(0, Math.min(100 - box.h, box.y + dy));
+        return {
+          ...box,
+          x: Math.round(newX * 10) / 10,
+          y: Math.round(newY * 10) / 10,
+        };
+      })
+    );
+  };
+
   // Undo last erase or restore action
   const handleUndo = () => {
     if (historyStack.length === 0 || !workingCanvasRef.current) return;
@@ -2715,11 +2768,86 @@ export function AdminScreen({
                             ))}
                           </div>
 
+                          {/* Geser Posisi Kotak Terpilih */}
+                          <div className="flex items-center justify-between pt-1.5 border-t border-slate-100">
+                            <span className="text-[11px] text-slate-600 font-medium">Geser Posisi:</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleNudgeSelectedBox(-2, 0)}
+                                className="w-7 h-7 bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 border border-slate-200 rounded-md text-xs font-bold flex items-center justify-center cursor-pointer transition-colors"
+                                title="Geser ke kiri"
+                              >
+                                ◀
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleNudgeSelectedBox(0, -2)}
+                                className="w-7 h-7 bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 border border-slate-200 rounded-md text-xs font-bold flex items-center justify-center cursor-pointer transition-colors"
+                                title="Geser ke atas"
+                              >
+                                ▲
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleNudgeSelectedBox(0, 2)}
+                                className="w-7 h-7 bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 border border-slate-200 rounded-md text-xs font-bold flex items-center justify-center cursor-pointer transition-colors"
+                                title="Geser ke bawah"
+                              >
+                                ▼
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleNudgeSelectedBox(2, 0)}
+                                className="w-7 h-7 bg-slate-100 hover:bg-indigo-100 hover:text-indigo-700 border border-slate-200 rounded-md text-xs font-bold flex items-center justify-center cursor-pointer transition-colors"
+                                title="Geser ke kanan"
+                              >
+                                ▶
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Atur Jarak / Spasi Antar Semua Kotak */}
+                          {photoBoxes.length > 1 && (
+                            <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] text-slate-700 font-semibold">Jarak Antar Kotak:</span>
+                                <span className="text-[10px] text-slate-500 font-medium">Spasi / Gap</span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleAdjustBoxSpacing(-3)}
+                                  className="py-1.5 px-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                                  title="Rapatkan jarak / kurangi spasi antar kotak foto"
+                                >
+                                  <span>➖ Rapatkan</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAdjustBoxSpacing(3)}
+                                  className="py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                                  title="Renggangkan jarak / perlebar spasi antar kotak foto"
+                                >
+                                  <span>➕ Renggang</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleCenterAllBoxes}
+                                  className="py-1.5 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                                  title="Pusatkan posisi semua kotak foto di tengah bingkai"
+                                >
+                                  <span>↕️ Pusatkan</span>
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
                           {/* 1-Click Clean Punch for This Box */}
                           <button
                             type="button"
                             onClick={handlePunchSelectedBox}
-                            className="w-full py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                            className="w-full py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer mt-1"
                             title="Lubangi bagian dalam kotak ini menjadi transparan 100%"
                           >
                             <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
@@ -2743,9 +2871,9 @@ export function AdminScreen({
               </div>
 
               {/* ─────── RIGHT COLUMN: Interactive Live Preview & Mode Switcher ─────── */}
-              <div className="lg:col-span-6 p-6 bg-slate-50/50 flex flex-col justify-between space-y-4">
+              <div className="lg:col-span-6 p-5 bg-slate-50/70 flex flex-col gap-2.5 h-full">
                 {/* Mode Switcher Tabs Header */}
-                <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center justify-between gap-2 flex-wrap shrink-0">
                   <div className="flex items-center bg-white border border-slate-200 rounded-xl p-1 shadow-2xs gap-1">
                     <button
                       type="button"
@@ -2815,7 +2943,7 @@ export function AdminScreen({
 
                 {/* Dimension & Aspect Ratio info pill */}
                 {imageMeta && (
-                  <div className="flex items-center justify-between px-2 text-[11px] text-slate-500 font-medium">
+                  <div className="flex items-center justify-between px-1 text-[11px] text-slate-500 font-medium shrink-0">
                     <span>Ukuran Frame: <strong className="font-mono text-slate-700">{imageMeta.width} × {imageMeta.height} px</strong></span>
                     <span className="font-mono text-slate-600 bg-slate-200/70 px-2 py-0.5 rounded-full text-[10px]">
                       Rasio {Math.round((imageMeta.width / imageMeta.height) * 100) / 100} : 1
@@ -2824,7 +2952,7 @@ export function AdminScreen({
                 )}
 
                 {/* Live Preview Canvas Outer Centering Container */}
-                <div className="w-full flex-1 flex items-center justify-center min-h-[320px] max-h-[500px] overflow-hidden">
+                <div className="w-full flex-1 flex items-center justify-center min-h-[360px] overflow-hidden py-1">
                   <div
                     ref={previewContainerRef}
                     onClick={interactionMode === "erase" && toolMode !== "restore" ? handlePreviewImageClick : undefined}
@@ -2835,9 +2963,9 @@ export function AdminScreen({
                     style={{
                       aspectRatio: imageMeta ? `${imageMeta.width} / ${imageMeta.height}` : "2 / 3",
                       width: imageMeta && imageMeta.height > 0
-                        ? `min(100%, calc(480px * ${imageMeta.width} / ${imageMeta.height}))`
+                        ? `min(100%, calc(min(68vh, 620px) * ${imageMeta.width} / ${imageMeta.height}))`
                         : "100%",
-                      maxHeight: "480px",
+                      maxHeight: "min(68vh, 620px)",
                     }}
                     className={`relative max-w-full rounded-2xl overflow-hidden border border-slate-300 shadow-sm flex items-center justify-center select-none ${
                       toolMode === "restore" && interactionMode === "erase"
@@ -3068,7 +3196,7 @@ export function AdminScreen({
               </div>
 
                 {/* Helper / Status Footer */}
-                <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+                <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 shrink-0">
                   <div className="flex items-center gap-1.5">
                     <span className="inline-flex items-center gap-1 text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-md font-semibold border border-indigo-200">
                       <Move className="w-3.5 h-3.5" />
