@@ -13,6 +13,7 @@ import {
   createBoothSession,
   verifyAndLoginAdmin,
 } from "@/lib/auth";
+import { CameraFilter, DEFAULT_PHOTO_FILTERS, loadLocalFilters } from "@/lib/filters";
 import yodhaLogo from "@/assets/yodha.png";
 import arthanaLogo from "@/assets/arthana.png";
 import gachaAsset from "@/assets/GACHA MACHINE.png";
@@ -69,22 +70,8 @@ type Screen = "home" | "frame" | "filter" | "shoot" | "review" | "result" | "adm
 type FrameId = "cafe" | "gameboy" | "bedroom" | "template";
 type LayoutId = "3x1" | "3x2" | "2x1" | "1x1" | "2x2" | "4x2";
 
-export interface CameraFilter {
-  id: string;
-  name: string;
-  css: string;
-  emoji: string;
-  desc: string;
-}
-
-export const PHOTO_FILTERS: CameraFilter[] = [
-  { id: "normal", name: "Alami (Normal)", css: "none", emoji: "✨", desc: "Warna jernih natural" },
-  { id: "warm", name: "Vintage Hangat", css: "sepia(0.35) contrast(1.05) brightness(1.02) saturate(1.15)", emoji: "🎞️", desc: "Sentuhan retro 90-an" },
-  { id: "bw", name: "Hitam Putih (B&W)", css: "grayscale(1) contrast(1.2) brightness(1.05)", emoji: "🖤", desc: "Monokrom klasik elegan" },
-  { id: "glow", name: "Soft Barbie Glow", css: "contrast(1.05) brightness(1.1) saturate(1.25)", emoji: "🌸", desc: "Cerah lembut bercahaya" },
-  { id: "cool", name: "Cool Cinema", css: "contrast(1.1) hue-rotate(185deg) saturate(0.9)", emoji: "❄️", desc: "Nuansa sejuk sinematik" },
-  { id: "cyber", name: "Retro Cyber", css: "contrast(1.3) saturate(1.4) brightness(1.04)", emoji: "⚡", desc: "Warna kontras tinggi pop" },
-];
+export type { CameraFilter };
+export const PHOTO_FILTERS: CameraFilter[] = DEFAULT_PHOTO_FILTERS;
 
 // Physical print sizes (cm) per layout
 const PRINT_SIZES: Record<LayoutId, { w: number; h: number; sheets: number; label: string }> = {
@@ -255,9 +242,36 @@ function Photobooth() {
   const [strip, setStrip] = useState<string | null>(null);
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(isBoothMode);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [cameraFilters, setCameraFilters] = useState<CameraFilter[]>(() => loadLocalFilters());
 
   const settingsDB = useRef(new SettingsDB()).current;
   const templateDB = useRef(new TemplateDB()).current;
+
+  // Sync camera filters with SettingsDB and listen for changes from Admin
+  useEffect(() => {
+    let mounted = true;
+    settingsDB.getSetting<CameraFilter[]>("camera_filters", DEFAULT_PHOTO_FILTERS).then((remote) => {
+      if (mounted && remote && remote.length > 0) {
+        setCameraFilters(remote);
+      }
+    });
+
+    const handleFiltersChanged = (e: any) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setCameraFilters(e.detail);
+      } else {
+        setCameraFilters(loadLocalFilters());
+      }
+    };
+
+    window.addEventListener("yodha_filters_changed", handleFiltersChanged);
+    window.addEventListener("storage", handleFiltersChanged);
+    return () => {
+      mounted = false;
+      window.removeEventListener("yodha_filters_changed", handleFiltersChanged);
+      window.removeEventListener("storage", handleFiltersChanged);
+    };
+  }, [settingsDB]);
 
   // Function to reload all templates (defaults + custom from DB)
   const reloadTemplates = useCallback(async () => {
@@ -465,6 +479,7 @@ function Photobooth() {
           <FilterScreen
             selectedFilter={selectedFilter}
             setSelectedFilter={setSelectedFilter}
+            filters={cameraFilters.filter(f => f.enabled !== false)}
             onBack={() => setScreen("frame")}
             onNext={() => {
               ensureFullscreen();
@@ -481,6 +496,7 @@ function Photobooth() {
             layout={layout}
             variant={variant}
             selectedFilter={selectedFilter}
+            filters={cameraFilters}
             photos={photos}
             setPhotos={setPhotos}
             onPhotosCaptured={(captured, capturedVideos) => {
@@ -503,6 +519,7 @@ function Photobooth() {
             layout={layout}
             variant={variant}
             selectedFilter={selectedFilter}
+            filters={cameraFilters}
             templates={templates}
             onBack={() => setScreen("shoot")}
             onFinish={async (finalStrip) => {
@@ -1115,17 +1132,26 @@ function FilterScreen({
   setSelectedFilter,
   onBack,
   onNext,
+  filters = PHOTO_FILTERS,
 }: {
   selectedFilter: string;
   setSelectedFilter: (f: string) => void;
   onBack: () => void;
   onNext: () => void;
+  filters?: CameraFilter[];
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const activeFilter = PHOTO_FILTERS.find(f => f.id === selectedFilter) || PHOTO_FILTERS[0];
+  const activeFilters = filters && filters.length > 0 ? filters : PHOTO_FILTERS;
+  const activeFilter = activeFilters.find(f => f.id === selectedFilter) || activeFilters[0];
+
+  useEffect(() => {
+    if (!activeFilters.some(f => f.id === selectedFilter)) {
+      setSelectedFilter(activeFilters[0].id);
+    }
+  }, [activeFilters, selectedFilter, setSelectedFilter]);
 
   const [cameraZoom] = useState<number>(() => {
     if (typeof window === "undefined") return 0.85;
@@ -1216,7 +1242,7 @@ function FilterScreen({
 
       {/* Horizontal Circular Filters ("lingkaran memanjang") */}
       <div className="w-full max-w-3xl flex flex-row items-center justify-center gap-3 sm:gap-6 overflow-x-auto py-2 px-2 no-scrollbar">
-        {PHOTO_FILTERS.map((f) => {
+        {activeFilters.map((f) => {
           const isSelected = f.id === selectedFilter;
           return (
             <button
@@ -1308,7 +1334,7 @@ function getDefaultDimensionsForLayout(layout?: string): { w: number; h: number 
 /* ───────────────────────── Shoot ───────────────────────── */
 
 function ShootScreen({
-  frame, layout, variant, selectedFilter = "normal", photos, setPhotos, onPhotosCaptured, onBack, isFullscreen, onToggleFullscreen, templates,
+  frame, layout, variant, selectedFilter = "normal", photos, setPhotos, onPhotosCaptured, onBack, isFullscreen, onToggleFullscreen, templates, filters = PHOTO_FILTERS,
 }: {
   frame: FrameId;
   layout: LayoutId;
@@ -1321,6 +1347,7 @@ function ShootScreen({
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
   templates: Template[];
+  filters?: CameraFilter[];
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -1329,6 +1356,8 @@ function ShootScreen({
   const [shooting, setShooting] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const activeFilters = filters && filters.length > 0 ? filters : PHOTO_FILTERS;
 
   const activeTemplate =
     templates.find(t => t.id === (layout + "_" + variant) || t.id === variant || t.presetId === variant) ||
@@ -1505,7 +1534,7 @@ function ShootScreen({
 
     // Flip horizontally for natural selfie view
     ctx.translate(w, 0); ctx.scale(-1, 1);
-    const filterObj = PHOTO_FILTERS.find(f => f.id === selectedFilter);
+    const filterObj = activeFilters.find(f => f.id === selectedFilter);
     if (filterObj && filterObj.css && filterObj.css !== "none") {
       ctx.filter = filterObj.css;
     }
@@ -1519,7 +1548,7 @@ function ShootScreen({
 
     ctx.drawImage(video, 0, 0, w, h);
     return canvas.toDataURL("image/jpeg", 0.95);
-  }, [selectedFilter, cameraZoom]);
+  }, [selectedFilter, cameraZoom, activeFilters]);
 
   const runSequence = useCallback(async () => {
     if (shooting) return;
@@ -1580,7 +1609,7 @@ function ShootScreen({
           style={{
             transform: `scaleX(-1) scale(${cameraZoom})`,
             transformOrigin: "center center",
-            filter: PHOTO_FILTERS.find(f => f.id === selectedFilter)?.css || "none",
+            filter: activeFilters.find(f => f.id === selectedFilter)?.css || "none",
           }}
         />
       )}
@@ -1867,6 +1896,7 @@ function ReviewScreen({
   templates,
   onBack,
   onFinish,
+  filters = PHOTO_FILTERS,
 }: {
   photos: string[];
   setPhotos: (p: string[]) => void;
@@ -1878,6 +1908,7 @@ function ReviewScreen({
   templates: Template[];
   onBack: () => void;
   onFinish: (finalStrip: string) => Promise<void> | void;
+  filters?: CameraFilter[];
 }) {
   const [retakeIdx, setRetakeIdx] = useState<number | null>(null);
   const [retakeCountdown, setRetakeCountdown] = useState<number | null>(null);
@@ -1887,7 +1918,8 @@ function ReviewScreen({
   const retakeVideoRef = useRef<HTMLVideoElement | null>(null);
   const retakeStreamRef = useRef<MediaStream | null>(null);
 
-  const activeFilter = PHOTO_FILTERS.find((f) => f.id === selectedFilter) || PHOTO_FILTERS[0];
+  const activeFilters = filters && filters.length > 0 ? filters : PHOTO_FILTERS;
+  const activeFilter = activeFilters.find((f) => f.id === selectedFilter) || activeFilters[0];
 
   // Open camera when retakeIdx is set
   useEffect(() => {

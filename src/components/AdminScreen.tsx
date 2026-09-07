@@ -40,7 +40,19 @@ import {
   Move,
   Lock,
   Clock,
+  Pencil,
+  Copy,
 } from "lucide-react";
+import {
+  CameraFilter,
+  FilterSliderSettings,
+  DEFAULT_SLIDER_SETTINGS,
+  DEFAULT_PHOTO_FILTERS,
+  generateFilterCss,
+  parseFilterCss,
+  loadLocalFilters,
+  saveLocalFilters,
+} from "../lib/filters";
 
 export interface Template {
   id: string;
@@ -176,6 +188,73 @@ const HOLE_PRESETS: Record<string, { id: string; label: string }[]> = {
   ],
 };
 
+const FILTER_PRESETS: { name: string; emoji: string; desc: string; sliders: FilterSliderSettings }[] = [
+  {
+    name: "Alami (Natural)",
+    emoji: "✨",
+    desc: "Warna natural jernih tanpa efek modifikasi",
+    sliders: { brightness: 100, contrast: 100, saturate: 100, sepia: 0, grayscale: 0, hueRotate: 0, blur: 0 },
+  },
+  {
+    name: "Vintage Hangat 90-an",
+    emoji: "🎞️",
+    desc: "Kesan nostalgia hangat ala foto film analog 90-an",
+    sliders: { brightness: 102, contrast: 105, saturate: 115, sepia: 35, grayscale: 0, hueRotate: 0, blur: 0 },
+  },
+  {
+    name: "Monokrom Noir (B&W)",
+    emoji: "🖤",
+    desc: "Hitam putih kontras tinggi bernuansa klasik elegan",
+    sliders: { brightness: 105, contrast: 125, saturate: 100, sepia: 0, grayscale: 100, hueRotate: 0, blur: 0 },
+  },
+  {
+    name: "Soft Barbie Glow",
+    emoji: "🌸",
+    desc: "Cerah segar merona dengan kelembutan bercahaya",
+    sliders: { brightness: 110, contrast: 105, saturate: 125, sepia: 0, grayscale: 0, hueRotate: 0, blur: 0 },
+  },
+  {
+    name: "Sunset Golden Hour",
+    emoji: "🌅",
+    desc: "Kilau sinar matahari senja keemasan yang mempesona",
+    sliders: { brightness: 106, contrast: 108, saturate: 135, sepia: 22, grayscale: 0, hueRotate: 345, blur: 0 },
+  },
+  {
+    name: "Cool Sinematik",
+    emoji: "❄️",
+    desc: "Warna sejuk misterius khas adegan film layar lebar",
+    sliders: { brightness: 100, contrast: 110, saturate: 90, sepia: 0, grayscale: 0, hueRotate: 185, blur: 0 },
+  },
+  {
+    name: "Retro Cyberpunk",
+    emoji: "⚡",
+    desc: "Kontras tajam dan saturasi tinggi gaya neon futuristik",
+    sliders: { brightness: 104, contrast: 130, saturate: 145, sepia: 0, grayscale: 0, hueRotate: 0, blur: 0 },
+  },
+  {
+    name: "Warm Cafe Latte",
+    emoji: "☕",
+    desc: "Nuansa cokelat lembut dan santai seperti kedai kopi",
+    sliders: { brightness: 104, contrast: 98, saturate: 92, sepia: 40, grayscale: 0, hueRotate: 10, blur: 0 },
+  },
+  {
+    name: "Pastel Sweet Candy",
+    emoji: "🍬",
+    desc: "Kecerahan tinggi lembut dengan saturasi manis pastel",
+    sliders: { brightness: 115, contrast: 96, saturate: 112, sepia: 8, grayscale: 0, hueRotate: 320, blur: 0 },
+  },
+  {
+    name: "Moody Forest Green",
+    emoji: "🌲",
+    desc: "Nuansa alam teduh dengan saturasi seimbang",
+    sliders: { brightness: 96, contrast: 112, saturate: 88, sepia: 12, grayscale: 0, hueRotate: 90, blur: 0 },
+  },
+];
+
+const EMOJI_SUGGESTIONS = ["✨", "🎞️", "🖤", "🌸", "🌅", "❄️", "⚡", "☕", "🍬", "🌲", "📸", "🔥", "🎀", "💜", "🕶️", "🌙", "🌊", "🌻"];
+
+const SAMPLE_PORTRAIT_URL = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&auto=format&fit=crop&q=80";
+
 const settingsDB = new SettingsDB();
 const sessionDB = new SessionDB();
 
@@ -187,7 +266,7 @@ export function AdminScreen({
   onLaunchBooth,
   onLogout,
 }: AdminScreenProps) {
-  const [activeNav, setActiveNav] = useState<"dashboard" | "frames" | "gallery" | "devices" | "settings" | "database">("dashboard");
+  const [activeNav, setActiveNav] = useState<"dashboard" | "frames" | "filters" | "gallery" | "devices" | "settings" | "database">("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -269,6 +348,21 @@ export function AdminScreen({
   const [supabaseSavedMsg, setSupabaseSavedMsg] = useState("");
   const [showAnonKey, setShowAnonKey] = useState(false);
 
+  // ── Camera Filters State & Modals ──
+  const [filters, setFilters] = useState<CameraFilter[]>(() => loadLocalFilters());
+  const [showFilterModal, setShowFilterModal] = useState(false);
+  const [editingFilterId, setEditingFilterId] = useState<string | null>(null);
+  const [filterName, setFilterName] = useState("");
+  const [filterEmoji, setFilterEmoji] = useState("✨");
+  const [filterDesc, setFilterDesc] = useState("");
+  const [filterSliders, setFilterSliders] = useState<FilterSliderSettings>(DEFAULT_SLIDER_SETTINGS);
+  const [customCssMode, setCustomCssMode] = useState(false);
+  const [customCssInput, setCustomCssInput] = useState("");
+  const [filterModalError, setFilterModalError] = useState("");
+  const [previewBeforeAfter, setPreviewBeforeAfter] = useState(false);
+  const [copiedCssId, setCopiedCssId] = useState<string | null>(null);
+  const [filterFeedbackMsg, setFilterFeedbackMsg] = useState("");
+
   // Load initial data
   useEffect(() => {
     // Admin screen should never be in fullscreen mode
@@ -310,7 +404,143 @@ export function AdminScreen({
 
     // Sessions
     loadSessions();
+
+    // Camera filters
+    settingsDB.getSetting<CameraFilter[]>("camera_filters", DEFAULT_PHOTO_FILTERS).then((val) => {
+      if (val && Array.isArray(val) && val.length > 0) {
+        setFilters(val);
+        saveLocalFilters(val);
+      }
+    });
   }, []);
+
+  // ── Filter Management Handlers ──
+  const handleToggleFilter = async (id: string, enabled: boolean) => {
+    const updated = filters.map((f) => (f.id === id ? { ...f, enabled } : f));
+    setFilters(updated);
+    saveLocalFilters(updated);
+    await settingsDB.saveSetting("camera_filters", updated);
+    const target = filters.find((f) => f.id === id);
+    setFilterFeedbackMsg(
+      enabled
+        ? `✅ Filter "${target?.name || id}" diaktifkan di booth.`
+        : `⏸️ Filter "${target?.name || id}" dinonaktifkan.`
+    );
+    setTimeout(() => setFilterFeedbackMsg(""), 3500);
+  };
+
+  const handleResetFiltersToDefault = async () => {
+    if (confirm("Kembalikan seluruh filter kamera ke 6 filter bawaan asli? Filter kustom akan direset.")) {
+      setFilters(DEFAULT_PHOTO_FILTERS);
+      saveLocalFilters(DEFAULT_PHOTO_FILTERS);
+      await settingsDB.saveSetting("camera_filters", DEFAULT_PHOTO_FILTERS);
+      setFilterFeedbackMsg("🔄 Seluruh filter kamera telah dikembalikan ke standar awal.");
+      setTimeout(() => setFilterFeedbackMsg(""), 3500);
+    }
+  };
+
+  const handleDeleteFilter = async (id: string) => {
+    const target = filters.find((f) => f.id === id);
+    if (!target) return;
+    if (confirm(`Hapus filter "${target.name}" secara permanen?`)) {
+      const updated = filters.filter((f) => f.id !== id);
+      setFilters(updated);
+      saveLocalFilters(updated);
+      await settingsDB.saveSetting("camera_filters", updated);
+      setFilterFeedbackMsg(`🗑️ Filter "${target.name}" telah dihapus.`);
+      setTimeout(() => setFilterFeedbackMsg(""), 3500);
+    }
+  };
+
+  const handleOpenAddFilterModal = () => {
+    setEditingFilterId(null);
+    setFilterName("");
+    setFilterEmoji("✨");
+    setFilterDesc("");
+    setFilterSliders({ ...DEFAULT_SLIDER_SETTINGS });
+    setCustomCssMode(false);
+    setCustomCssInput("");
+    setFilterModalError("");
+    setPreviewBeforeAfter(false);
+    setShowFilterModal(true);
+  };
+
+  const handleOpenEditFilterModal = (filter: CameraFilter) => {
+    setEditingFilterId(filter.id);
+    setFilterName(filter.name);
+    setFilterEmoji(filter.emoji);
+    setFilterDesc(filter.desc);
+    const parsed = parseFilterCss(filter.css);
+    setFilterSliders(parsed);
+    setCustomCssMode(false);
+    setCustomCssInput(filter.css);
+    setFilterModalError("");
+    setPreviewBeforeAfter(false);
+    setShowFilterModal(true);
+  };
+
+  const handleApplyPreset = (preset: typeof FILTER_PRESETS[0]) => {
+    if (!editingFilterId) {
+      setFilterName(preset.name);
+      setFilterDesc(preset.desc);
+    }
+    setFilterEmoji(preset.emoji);
+    setFilterSliders({ ...preset.sliders });
+    setCustomCssMode(false);
+  };
+
+  const handleCopyCss = (id: string, css: string) => {
+    navigator.clipboard?.writeText?.(css);
+    setCopiedCssId(id);
+    setTimeout(() => setCopiedCssId(null), 2000);
+  };
+
+  const handleSaveFilterModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!filterName.trim()) {
+      setFilterModalError("Nama filter tidak boleh kosong!");
+      return;
+    }
+
+    const finalCss = customCssMode ? (customCssInput.trim() || "none") : generateFilterCss(filterSliders);
+
+    let updated: CameraFilter[];
+    if (editingFilterId) {
+      updated = filters.map((f) =>
+        f.id === editingFilterId
+          ? {
+              ...f,
+              name: filterName.trim(),
+              emoji: filterEmoji.trim() || "✨",
+              desc: filterDesc.trim() || "Filter foto kustom",
+              css: finalCss,
+            }
+          : f
+      );
+    } else {
+      const newFilter: CameraFilter = {
+        id: "custom_" + Date.now(),
+        name: filterName.trim(),
+        emoji: filterEmoji.trim() || "✨",
+        desc: filterDesc.trim() || "Filter foto kustom buatan admin",
+        css: finalCss,
+        enabled: true,
+        isCustom: true,
+      };
+      updated = [...filters, newFilter];
+    }
+
+    setFilters(updated);
+    saveLocalFilters(updated);
+    await settingsDB.saveSetting("camera_filters", updated);
+    setShowFilterModal(false);
+    setFilterFeedbackMsg(
+      editingFilterId
+        ? `✅ Filter "${filterName.trim()}" berhasil diperbarui!`
+        : `🎉 Filter baru "${filterName.trim()}" berhasil ditambahkan!`
+    );
+    setTimeout(() => setFilterFeedbackMsg(""), 3500);
+  };
 
   // Photo Box Drag & Resize Listeners
   useEffect(() => {
@@ -1610,6 +1840,26 @@ export function AdminScreen({
             </button>
 
             <button
+              onClick={() => setActiveNav("filters")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                activeNav === "filters"
+                  ? "bg-blue-50 text-blue-600 font-bold shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              } ${sidebarCollapsed ? "justify-center" : ""}`}
+              title="Manajemen Filter Kamera"
+            >
+              <Sparkles className="w-4 h-4 shrink-0 text-pink-500" />
+              {!sidebarCollapsed && (
+                <div className="flex items-center justify-between w-full">
+                  <span>Filter Kamera</span>
+                  <span className="text-[10px] bg-pink-100 text-pink-700 px-1.5 py-0.5 rounded-full font-bold">
+                    {filters.filter((f) => f.enabled !== false).length} Aktif
+                  </span>
+                </div>
+              )}
+            </button>
+
+            <button
               onClick={() => setActiveNav("devices")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                 activeNav === "devices"
@@ -1764,7 +2014,7 @@ export function AdminScreen({
           {activeNav === "dashboard" && (
             <div className="space-y-6 max-w-7xl mx-auto">
               {/* Stat Cards Row */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
                   <div>
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Sesi Foto</p>
@@ -1780,17 +2030,36 @@ export function AdminScreen({
                   <div>
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Template Aktif</p>
                     <h3 className="text-2xl font-black text-slate-900 mt-1">{activeTemplatesCount}</h3>
-                    <span className="text-[11px] text-slate-400 font-medium">Dari {templates.length} total bingkai</span>
+                    <span className="text-[11px] text-slate-400 font-medium">Dari {templates.length} bingkai</span>
                   </div>
                   <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
                     <Frame className="w-6 h-6" />
                   </div>
                 </div>
 
+                <div
+                  onClick={() => setActiveNav("filters")}
+                  className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between cursor-pointer hover:border-pink-300 hover:shadow-sm transition-all group"
+                  title="Klik untuk kelola filter kamera"
+                >
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider group-hover:text-pink-600 transition-colors">
+                      Filter Kamera
+                    </p>
+                    <h3 className="text-2xl font-black text-slate-900 mt-1">
+                      {filters.filter((f) => f.enabled !== false).length}
+                    </h3>
+                    <span className="text-[11px] text-pink-600 font-medium">Dari {filters.length} pilihan efek</span>
+                  </div>
+                  <div className="w-12 h-12 rounded-2xl bg-pink-50 text-pink-600 flex items-center justify-center group-hover:scale-105 transition-transform">
+                    <Sparkles className="w-6 h-6" />
+                  </div>
+                </div>
+
                 <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
                   <div>
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Database Cloud</p>
-                    <h3 className="text-base font-bold text-slate-900 mt-1.5">{dbConfigured ? "Supabase PostgreSQL" : "Local IndexedDB"}</h3>
+                    <h3 className="text-base font-bold text-slate-900 mt-1.5">{dbConfigured ? "Supabase Cloud" : "Local DB"}</h3>
                     <span className={`text-[11px] font-medium ${dbConfigured ? "text-emerald-600" : "text-amber-600"}`}>
                       {dbConfigured ? "Terhubung & Siap" : "Koneksi Lokal"}
                     </span>
@@ -2001,6 +2270,212 @@ export function AdminScreen({
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* ──────────────── TAB: MANAJEMEN FILTER KAMERA ──────────────── */}
+          {activeNav === "filters" && (
+            <div className="space-y-6 max-w-7xl mx-auto">
+              {/* Header with Title & Action Buttons */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h2 className="text-xl font-bold text-slate-900">Manajemen Filter Kamera</h2>
+                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-pink-50 text-pink-700 border border-pink-200">
+                      {filters.filter((f) => f.enabled !== false).length} Aktif di Kiosk
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Atur filter foto yang dapat dipilih oleh pengunjung saat foto booth, sesuaikan efek visual, atau tambahkan filter racikan kustom.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleResetFiltersToDefault}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all shadow-xs cursor-pointer"
+                    title="Kembalikan ke 6 filter standar"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Reset ke Default</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleOpenAddFilterModal}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-700 hover:to-rose-700 text-white text-xs font-bold shadow-md shadow-pink-600/20 transition-all cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Tambah Filter Baru</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Feedback toast notification if any */}
+              {filterFeedbackMsg && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold rounded-2xl flex items-center gap-2 shadow-xs animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{filterFeedbackMsg}</span>
+                </div>
+              )}
+
+              {/* Filter Cards Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {filters.map((f) => {
+                  const isEnabled = f.enabled !== false;
+                  return (
+                    <div
+                      key={f.id}
+                      className={`bg-white rounded-2xl border transition-all duration-200 flex flex-col justify-between overflow-hidden shadow-xs hover:shadow-md ${
+                        isEnabled ? "border-slate-200/90" : "border-slate-200 bg-slate-50/60 opacity-80"
+                      }`}
+                    >
+                      <div className="p-4 space-y-3.5">
+                        {/* Card Header: Emoji, Name, Badges */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200/80 flex items-center justify-center text-xl shrink-0 shadow-xs">
+                              {f.emoji || "✨"}
+                            </div>
+                            <div className="min-w-0">
+                              <h3 className="text-sm font-bold text-slate-900 truncate leading-tight">
+                                {f.name}
+                              </h3>
+                              <p className="text-[11px] text-slate-400 font-medium truncate mt-0.5">
+                                {f.desc || "Filter foto booth"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                isEnabled
+                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                  : "bg-slate-100 text-slate-500 border border-slate-200"
+                              }`}
+                            >
+                              {isEnabled ? "Aktif" : "Nonaktif"}
+                            </span>
+                            {f.isCustom ? (
+                              <span className="text-[9px] font-semibold bg-purple-50 text-purple-700 px-1.5 py-0.2 rounded border border-purple-200">
+                                Kustom
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-semibold bg-slate-50 text-slate-500 px-1.5 py-0.2 rounded border border-slate-200">
+                                Bawaan
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Interactive Visual Preview Box */}
+                        <div className="relative aspect-[16/10] rounded-xl overflow-hidden bg-slate-900 border border-slate-200 group flex items-center justify-center">
+                          <img
+                            src={SAMPLE_PORTRAIT_URL}
+                            alt={f.name}
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).src = yodhaLogo;
+                            }}
+                            className="w-full h-full object-cover transition-all duration-300"
+                            style={{ filter: f.css }}
+                          />
+
+                          {/* CSS Indicator Pill */}
+                          <div className="absolute top-2 left-2 px-2 py-1 rounded-md bg-black/60 backdrop-blur-xs text-white text-[10px] font-medium border border-white/10 flex items-center gap-1">
+                            <span>{f.emoji}</span>
+                            <span>{f.css === "none" ? "Normal" : "Efek Aktif"}</span>
+                          </div>
+
+                          <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span className="px-2 py-0.5 rounded bg-black/70 backdrop-blur-xs text-amber-300 font-mono text-[9px]">
+                              Live Preview
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* CSS Code Display with Copy Button */}
+                        <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">
+                              Kode Efek CSS:
+                            </span>
+                            <p
+                              className="font-mono text-[10px] text-slate-700 truncate select-all"
+                              title={f.css}
+                            >
+                              {f.css}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyCss(f.id, f.css)}
+                            className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-blue-600 hover:border-blue-300 transition-colors shrink-0 cursor-pointer shadow-2xs"
+                            title="Salin CSS ke Clipboard"
+                          >
+                            {copiedCssId === f.id ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Card Footer: Toggle and Action Buttons */}
+                      <div className="px-4 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between gap-2">
+                        {/* Switch ON/OFF */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleFilter(f.id, !isEnabled)}
+                          className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs ${
+                            isEnabled
+                              ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                              : "bg-slate-200 hover:bg-slate-300 text-slate-700"
+                          }`}
+                        >
+                          {isEnabled ? <Check className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
+                          <span>{isEnabled ? "Aktif di Booth" : "Nonaktif"}</span>
+                        </button>
+
+                        {/* Edit Button */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditFilterModal(f)}
+                          className="p-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 bg-white border border-slate-200 rounded-xl transition-colors cursor-pointer shadow-2xs"
+                          title="Edit Efek & Slider Filter Ini"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Delete Button (Only for custom filters) */}
+                        {f.isCustom && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteFilter(f.id)}
+                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 bg-white border border-slate-200 rounded-xl transition-colors cursor-pointer shadow-2xs"
+                            title="Hapus Filter Kustom"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Helpful Information / Guidance Card */}
+              <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-pink-50 rounded-2xl border border-indigo-100 p-5 space-y-2">
+                <h4 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-pink-500" />
+                  <span>Tips Filter Photobooth & Live Rendering</span>
+                </h4>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Semua filter kamera yang berstatus <strong>Aktif</strong> akan otomatis ditampilkan pada menu pemilihan filter pengunjung di layar Booth. Efek warna filter diproses secara real-time menggunakan akselerasi grafis perangkat (GPU), sehingga foto yang diambil maupun cetakan photo strip akan memiliki warna yang konsisten dan memukau.
+                </p>
               </div>
             </div>
           )}
@@ -3305,6 +3780,372 @@ export function AdminScreen({
                   className="px-6 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-blue-600/20 transition-all disabled:opacity-50 cursor-pointer"
                 >
                   {isSubmitting ? "Menyimpan ke Cloud..." : "Simpan Bingkai"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ──────────────── MODAL RACIK & EDIT FILTER KAMERA ──────────────── */}
+      {showFilterModal && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-3 md:p-6 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-pink-50 text-pink-600 flex items-center justify-center font-bold text-lg shadow-xs">
+                  {filterEmoji || "✨"}
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    {editingFilterId ? "Edit Filter Kamera" : "Racik Filter Kamera Baru"}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Sesuaikan warna dengan slider visual dan lihat hasilnya secara langsung.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFilterModal(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body (2 Columns) */}
+            <div className="flex-1 overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-12 gap-6">
+              {/* Left Column: Live Visual Preview & Presets (md:col-span-5) */}
+              <div className="md:col-span-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800">Pratinjau Langsung</span>
+                  <button
+                    type="button"
+                    onMouseDown={() => setPreviewBeforeAfter(true)}
+                    onMouseUp={() => setPreviewBeforeAfter(false)}
+                    onTouchStart={() => setPreviewBeforeAfter(true)}
+                    onTouchEnd={() => setPreviewBeforeAfter(false)}
+                    className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200 transition-colors cursor-pointer select-none"
+                  >
+                    {previewBeforeAfter ? "👁️ Menampilkan Asli" : "Tahan untuk Asli"}
+                  </button>
+                </div>
+
+                {/* Preview Frame */}
+                <div className="relative aspect-[4/3] rounded-2xl overflow-hidden bg-slate-950 border border-slate-300 shadow-md flex items-center justify-center">
+                  <img
+                    src={SAMPLE_PORTRAIT_URL}
+                    alt="Preview Model"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src = yodhaLogo;
+                    }}
+                    className="w-full h-full object-cover transition-all duration-150"
+                    style={{
+                      filter: previewBeforeAfter
+                        ? "none"
+                        : customCssMode
+                        ? customCssInput || "none"
+                        : generateFilterCss(filterSliders),
+                    }}
+                  />
+
+                  {/* Active Badge */}
+                  <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md text-white text-[11px] font-bold border border-white/20 flex items-center gap-1.5 shadow-xs">
+                    <span>{filterEmoji}</span>
+                    <span className="truncate max-w-[120px]">{filterName || "Pratinjau"}</span>
+                  </div>
+
+                  {previewBeforeAfter && (
+                    <div className="absolute inset-0 bg-black/30 backdrop-blur-2xs flex items-center justify-center pointer-events-none">
+                      <span className="bg-slate-900/90 text-white font-bold text-xs px-3 py-1.5 rounded-xl border border-white/20">
+                        Foto Asli (Tanpa Filter)
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* CSS Output Pill */}
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    <span>Generated CSS Filter:</span>
+                    <span className="font-mono text-pink-600">
+                      {customCssMode ? "Manual" : "Otomatis"}
+                    </span>
+                  </div>
+                  <p className="font-mono text-xs text-slate-700 break-all select-all font-semibold leading-relaxed">
+                    {customCssMode ? customCssInput || "none" : generateFilterCss(filterSliders)}
+                  </p>
+                </div>
+
+                {/* Presets Quick Picker */}
+                <div className="space-y-2 pt-1">
+                  <span className="text-[11px] font-bold text-slate-600 block">
+                    ⚡ Inspirasi Preset Cepat:
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {FILTER_PRESETS.map((p, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleApplyPreset(p)}
+                        className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-pink-50 hover:text-pink-700 hover:border-pink-300 border border-slate-200 text-[11px] font-medium text-slate-700 transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        <span>{p.emoji}</span>
+                        <span>{p.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Name, Description & Visual Sliders (md:col-span-7) */}
+              <form id="filter-form" onSubmit={handleSaveFilterModal} className="md:col-span-7 space-y-4">
+                {filterModalError && (
+                  <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold rounded-xl flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{filterModalError}</span>
+                  </div>
+                )}
+
+                {/* Name & Emoji inputs */}
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="col-span-1 space-y-1">
+                    <label className="block text-xs font-bold text-slate-700">Ikon Emoji</label>
+                    <input
+                      type="text"
+                      value={filterEmoji}
+                      onChange={(e) => setFilterEmoji(e.target.value)}
+                      maxLength={4}
+                      className="w-full px-3 py-2 text-center text-lg border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50 font-sans"
+                    />
+                  </div>
+                  <div className="col-span-3 space-y-1">
+                    <label className="block text-xs font-bold text-slate-700">Nama Filter</label>
+                    <input
+                      type="text"
+                      value={filterName}
+                      onChange={(e) => {
+                        setFilterName(e.target.value);
+                        setFilterModalError("");
+                      }}
+                      placeholder="Contoh: Sunset Golden Hour"
+                      className="w-full px-3.5 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500 font-semibold bg-slate-50"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* Quick Emoji selection buttons */}
+                <div className="flex items-center gap-1 overflow-x-auto pb-1 no-scrollbar">
+                  <span className="text-[10px] text-slate-400 font-semibold shrink-0">Pilihan Ikon:</span>
+                  {EMOJI_SUGGESTIONS.map((em, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setFilterEmoji(em)}
+                      className={`w-7 h-7 rounded-lg text-sm flex items-center justify-center transition-all cursor-pointer ${
+                        filterEmoji === em
+                          ? "bg-pink-100 border border-pink-400 scale-110"
+                          : "bg-slate-100 hover:bg-slate-200 border border-slate-200"
+                      }`}
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Description */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700">Deskripsi Singkat</label>
+                  <input
+                    type="text"
+                    value={filterDesc}
+                    onChange={(e) => setFilterDesc(e.target.value)}
+                    placeholder="Contoh: Kilau sinar senja keemasan yang mempesona"
+                    className="w-full px-3.5 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500 bg-slate-50"
+                  />
+                </div>
+
+                {/* Switch Manual CSS / Slider mode */}
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-900">Pengaturan Efek Warna</span>
+                  <button
+                    type="button"
+                    onClick={() => setCustomCssMode(!customCssMode)}
+                    className="text-[11px] font-semibold text-pink-600 hover:text-pink-800 transition-colors cursor-pointer"
+                  >
+                    {customCssMode ? "← Gunakan Slider Visual" : "Opsi Lanjutan: Ketik Manual CSS →"}
+                  </button>
+                </div>
+
+                {customCssMode ? (
+                  /* Manual CSS Input Box */
+                  <div className="space-y-1.5 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl">
+                    <label className="block text-xs font-bold text-slate-700">Kode CSS filter</label>
+                    <textarea
+                      value={customCssInput}
+                      onChange={(e) => setCustomCssInput(e.target.value)}
+                      placeholder="sepia(0.3) contrast(1.1) brightness(1.05)..."
+                      rows={3}
+                      className="w-full p-2.5 text-xs font-mono border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500 bg-white"
+                    />
+                    <p className="text-[11px] text-slate-400">
+                      Mendukung seluruh fungsi CSS filter seperti blur(), brightness(), contrast(), grayscale(), hue-rotate(), invert(), opacity(), saturate(), sepia().
+                    </p>
+                  </div>
+                ) : (
+                  /* Visual Sliders Group */
+                  <div className="space-y-3.5 p-4 bg-slate-50/70 border border-slate-200 rounded-2xl">
+                    {/* 1. Brightness */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-700">Kecerahan (Brightness):</span>
+                        <span className="font-mono font-bold text-pink-600">{filterSliders.brightness}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="50"
+                        max="180"
+                        value={filterSliders.brightness}
+                        onChange={(e) => setFilterSliders({ ...filterSliders, brightness: Number(e.target.value) })}
+                        className="w-full accent-pink-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    {/* 2. Contrast */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-700">Kontras (Contrast):</span>
+                        <span className="font-mono font-bold text-pink-600">{filterSliders.contrast}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="50"
+                        max="200"
+                        value={filterSliders.contrast}
+                        onChange={(e) => setFilterSliders({ ...filterSliders, contrast: Number(e.target.value) })}
+                        className="w-full accent-pink-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    {/* 3. Saturation */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-700">Kepekatan Warna (Saturation):</span>
+                        <span className="font-mono font-bold text-pink-600">{filterSliders.saturate}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="250"
+                        value={filterSliders.saturate}
+                        onChange={(e) => setFilterSliders({ ...filterSliders, saturate: Number(e.target.value) })}
+                        className="w-full accent-pink-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    {/* 4. Sepia */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-700">Nuansa Retro (Sepia):</span>
+                        <span className="font-mono font-bold text-amber-600">{filterSliders.sepia}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={filterSliders.sepia}
+                        onChange={(e) => setFilterSliders({ ...filterSliders, sepia: Number(e.target.value) })}
+                        className="w-full accent-amber-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    {/* 5. Grayscale */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-700">Hitam Putih (Grayscale):</span>
+                        <span className="font-mono font-bold text-slate-600">{filterSliders.grayscale}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={filterSliders.grayscale}
+                        onChange={(e) => setFilterSliders({ ...filterSliders, grayscale: Number(e.target.value) })}
+                        className="w-full accent-slate-700 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    {/* 6. Hue Rotate */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-700">Pergeseran Warna (Hue Rotate):</span>
+                        <span className="font-mono font-bold text-indigo-600">{filterSliders.hueRotate}°</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="360"
+                        value={filterSliders.hueRotate}
+                        onChange={(e) => setFilterSliders({ ...filterSliders, hueRotate: Number(e.target.value) })}
+                        className="w-full accent-indigo-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    {/* 7. Blur */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-700">Kelembutan (Soft Blur):</span>
+                        <span className="font-mono font-bold text-blue-600">{filterSliders.blur}px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="3"
+                        step="0.5"
+                        value={filterSliders.blur}
+                        onChange={(e) => setFilterSliders({ ...filterSliders, blur: Number(e.target.value) })}
+                        className="w-full accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Reset Sliders Button */}
+                    <div className="pt-2 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setFilterSliders({ ...DEFAULT_SLIDER_SETTINGS })}
+                        className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Kembalikan Slider ke Standar</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </form>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between shrink-0">
+              <span className="text-xs text-slate-500">
+                ✨ Filter akan langsung aktif dan tersimpan ke cloud.
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowFilterModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-white text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  form="filter-form"
+                  className="px-6 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-700 hover:to-rose-700 text-white text-xs font-bold shadow-md shadow-pink-600/20 transition-all cursor-pointer"
+                >
+                  {editingFilterId ? "Simpan Perubahan" : "Tambah Filter"}
                 </button>
               </div>
             </div>
