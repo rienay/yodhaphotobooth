@@ -32,7 +32,9 @@ import {
   Eye,
   Layers,
   Undo,
+  Redo,
   RotateCcw,
+  Paintbrush,
   Scissors,
   Square,
   Move,
@@ -203,9 +205,14 @@ export function AdminScreen({
   const [rawBase64Img, setRawBase64Img] = useState("");
   const [activeCanvasData, setActiveCanvasData] = useState("");
   const [historyStack, setHistoryStack] = useState<string[]>([]);
+  const [redoStack, setRedoStack] = useState<string[]>([]);
   const [chromaTolerance, setChromaTolerance] = useState(25); // 5 - 70%
   const [chromaColor, setChromaColor] = useState("#FFFFFF");
-  const [toolMode, setToolMode] = useState<"wand" | "global">("wand");
+  const [toolMode, setToolMode] = useState<"wand" | "global" | "restore">("wand");
+  const [brushSize, setBrushSize] = useState(30); // 10 - 100px
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [brushCursor, setBrushCursor] = useState<{ x: number; y: number; visible: boolean }>({ x: 0, y: 0, visible: false });
+  const lastRestorePosRef = useRef<{ x: number; y: number } | null>(null);
   const [interactionMode, setInteractionMode] = useState<"erase" | "boxes">("erase");
   const [previewTab, setPreviewTab] = useState<"checkerboard" | "photos">("checkerboard");
   const [detectedHoles, setDetectedHoles] = useState<{ x: number; y: number; w: number; h: number }[]>([]);
@@ -867,7 +874,8 @@ export function AdminScreen({
   // 1-Click: Erase White Photo Boxes
   const handleEraseWhite = () => {
     if (!workingCanvasRef.current || !activeCanvasData) return;
-    setHistoryStack((prev) => [...prev.slice(-9), activeCanvasData]);
+    setHistoryStack((prev) => [...prev.slice(-14), activeCanvasData]);
+    setRedoStack([]);
     const res = globalEraseColor(workingCanvasRef.current, "#FFFFFF", chromaTolerance);
     setActiveCanvasData(res.dataUrl);
     applyHolesToLayout(res.holes);
@@ -877,7 +885,8 @@ export function AdminScreen({
   // 1-Click: Erase Green Screen Background
   const handleEraseGreen = () => {
     if (!workingCanvasRef.current || !activeCanvasData) return;
-    setHistoryStack((prev) => [...prev.slice(-9), activeCanvasData]);
+    setHistoryStack((prev) => [...prev.slice(-14), activeCanvasData]);
+    setRedoStack([]);
     const res = globalEraseColor(workingCanvasRef.current, "#00FF00", chromaTolerance);
     setActiveCanvasData(res.dataUrl);
     applyHolesToLayout(res.holes);
@@ -887,7 +896,8 @@ export function AdminScreen({
   // 1-Click: Erase Selected Custom Color
   const handleEraseChosenColor = (hex: string) => {
     if (!workingCanvasRef.current || !activeCanvasData) return;
-    setHistoryStack((prev) => [...prev.slice(-9), activeCanvasData]);
+    setHistoryStack((prev) => [...prev.slice(-14), activeCanvasData]);
+    setRedoStack([]);
     const res = globalEraseColor(workingCanvasRef.current, hex, chromaTolerance);
     setActiveCanvasData(res.dataUrl);
     applyHolesToLayout(res.holes);
@@ -897,6 +907,8 @@ export function AdminScreen({
   // Interactive Click on Preview Canvas / Image
   const handlePreviewImageClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!workingCanvasRef.current || !activeCanvasData || !originalImageRef.current) return;
+    if (toolMode === "restore") return; // Handled by pointer down/move for restoration
+
     const rect = e.currentTarget.getBoundingClientRect();
     const xRatio = (e.clientX - rect.left) / rect.width;
     const yRatio = (e.clientY - rect.top) / rect.height;
@@ -906,7 +918,8 @@ export function AdminScreen({
     const naturalY = Math.floor(yRatio * canvas.height);
 
     // Save history for Undo
-    setHistoryStack((prev) => [...prev.slice(-9), activeCanvasData]);
+    setHistoryStack((prev) => [...prev.slice(-14), activeCanvasData]);
+    setRedoStack([]);
 
     if (toolMode === "wand") {
       // Erase only clicked contiguous box
@@ -927,6 +940,104 @@ export function AdminScreen({
         setActionStatus(`Warna ${hex} pada seluruh gambar berhasil dihapus!`);
       }
     }
+  };
+
+  // Restore original pixels at point (x, y) with smooth interpolation
+  const restoreAtPoint = (canvasX: number, canvasY: number, prevCanvasX?: number, prevCanvasY?: number) => {
+    const canvas = workingCanvasRef.current;
+    if (!canvas || !originalImageRef.current || !previewContainerRef.current) return;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return;
+
+    const rect = previewContainerRef.current.getBoundingClientRect();
+    const scale = rect.width > 0 ? canvas.width / rect.width : 1;
+    const radius = Math.max(3, (brushSize / 2) * scale);
+    const img = originalImageRef.current;
+
+    if (prevCanvasX !== undefined && prevCanvasY !== undefined) {
+      const dist = Math.hypot(canvasX - prevCanvasX, canvasY - prevCanvasY);
+      const steps = Math.max(1, Math.ceil(dist / (radius * 0.4)));
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const x = prevCanvasX + (canvasX - prevCanvasX) * t;
+        const y = prevCanvasY + (canvasY - prevCanvasY) * t;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(img, 0, 0);
+        ctx.restore();
+      }
+    } else {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(canvasX, canvasY, radius, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(img, 0, 0);
+      ctx.restore();
+    }
+  };
+
+  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (interactionMode !== "erase" || !workingCanvasRef.current || !activeCanvasData || !originalImageRef.current) return;
+    if (toolMode === "restore") {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const xRatio = (e.clientX - rect.left) / rect.width;
+      const yRatio = (e.clientY - rect.top) / rect.height;
+      const canvas = workingCanvasRef.current;
+      const naturalX = Math.floor(xRatio * canvas.width);
+      const naturalY = Math.floor(yRatio * canvas.height);
+
+      setIsRestoring(true);
+      setHistoryStack((prev) => [...prev.slice(-14), activeCanvasData]);
+      setRedoStack([]);
+      lastRestorePosRef.current = { x: naturalX, y: naturalY };
+      restoreAtPoint(naturalX, naturalY);
+      setActiveCanvasData(canvas.toDataURL("image/png"));
+    }
+  };
+
+  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (interactionMode !== "erase") return;
+    const rect = e.currentTarget.getBoundingClientRect();
+
+    if (toolMode === "restore") {
+      setBrushCursor({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+        visible: true,
+      });
+
+      if (isRestoring && workingCanvasRef.current && originalImageRef.current) {
+        const xRatio = (e.clientX - rect.left) / rect.width;
+        const yRatio = (e.clientY - rect.top) / rect.height;
+        const canvas = workingCanvasRef.current;
+        const naturalX = Math.floor(xRatio * canvas.width);
+        const naturalY = Math.floor(yRatio * canvas.height);
+        const prev = lastRestorePosRef.current;
+        restoreAtPoint(naturalX, naturalY, prev?.x, prev?.y);
+        lastRestorePosRef.current = { x: naturalX, y: naturalY };
+        setActiveCanvasData(canvas.toDataURL("image/png"));
+      }
+    }
+  };
+
+  const handleCanvasPointerUp = () => {
+    if (isRestoring && workingCanvasRef.current) {
+      setIsRestoring(false);
+      lastRestorePosRef.current = null;
+      const canvas = workingCanvasRef.current;
+      const finalData = canvas.toDataURL("image/png");
+      setActiveCanvasData(finalData);
+      const holes = detectHolesFromCanvas(canvas);
+      applyHolesToLayout(holes);
+      setActionStatus("Bagian gambar berhasil dipulihkan dari gambar asli.");
+    }
+  };
+
+  const handleCanvasPointerLeave = () => {
+    setBrushCursor((prev) => ({ ...prev, visible: false }));
+    handleCanvasPointerUp();
   };
 
   // Punch hole in selected box
@@ -1056,11 +1167,13 @@ export function AdminScreen({
     setActionStatus(`Kotak foto dihapus.`);
   };
 
-  // Undo last erase action
+  // Undo last erase or restore action
   const handleUndo = () => {
     if (historyStack.length === 0 || !workingCanvasRef.current) return;
     const prevData = historyStack[historyStack.length - 1];
-    setHistoryStack((prev) => prev.slice(0, -1));
+    const newHist = historyStack.slice(0, -1);
+    setHistoryStack(newHist);
+    setRedoStack((prev) => [...prev, activeCanvasData]);
     setActiveCanvasData(prevData);
 
     const img = new Image();
@@ -1071,17 +1184,41 @@ export function AdminScreen({
         ctx.drawImage(img, 0, 0);
         const holes = detectHolesFromCanvas(workingCanvasRef.current);
         applyHolesToLayout(holes);
-        setActionStatus("Berhasil kembali ke langkah sebelumnya.");
+        setActionStatus("Berhasil kembali ke langkah sebelumnya (Undo).");
       }
     };
     img.src = prevData;
   };
 
-  // Reset to original uploaded image
+  // Redo / Pulihkan langkah yang baru saja di-undo
+  const handleRedo = () => {
+    if (redoStack.length === 0 || !workingCanvasRef.current) return;
+    const nextData = redoStack[redoStack.length - 1];
+    const newRedo = redoStack.slice(0, -1);
+    setRedoStack(newRedo);
+    setHistoryStack((prev) => [...prev, activeCanvasData]);
+    setActiveCanvasData(nextData);
+
+    const img = new Image();
+    img.onload = () => {
+      const ctx = workingCanvasRef.current?.getContext("2d", { willReadFrequently: true });
+      if (ctx && workingCanvasRef.current) {
+        ctx.clearRect(0, 0, workingCanvasRef.current.width, workingCanvasRef.current.height);
+        ctx.drawImage(img, 0, 0);
+        const holes = detectHolesFromCanvas(workingCanvasRef.current);
+        applyHolesToLayout(holes);
+        setActionStatus("Langkah berhasil dipulihkan (Redo).");
+      }
+    };
+    img.src = nextData;
+  };
+
+  // Reset / Pulihkan seluruh bingkai ke gambar asli
   const handleResetOriginal = () => {
     if (!rawBase64Img || !originalImageRef.current) return;
+    setHistoryStack((prev) => [...prev.slice(-14), activeCanvasData]);
+    setRedoStack([]);
     setActiveCanvasData(rawBase64Img);
-    setHistoryStack([]);
 
     const canvas = workingCanvasRef.current;
     if (canvas) {
@@ -1091,7 +1228,7 @@ export function AdminScreen({
         ctx.drawImage(originalImageRef.current, 0, 0);
         const holes = detectHolesFromCanvas(canvas);
         applyHolesToLayout(holes);
-        setActionStatus("Gambar dikembalikan ke kondisi awal.");
+        setActionStatus("Seluruh bingkai berhasil dipulihkan ke gambar asli.");
       }
     }
   };
@@ -2111,7 +2248,7 @@ export function AdminScreen({
                     </div>
                   </div>
 
-                  {/* ─────── 1. ALAT PENGHAPUS BACKGROUND / WARNA BINGKAI (MANDIRI) ─────── */}
+                  {/* ─────── 1. ALAT PENGHAPUS & PEMULIH BINGKAI (MANDIRI) ─────── */}
                   <div className="p-4 rounded-xl border border-blue-100 bg-blue-50/30 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -2120,41 +2257,51 @@ export function AdminScreen({
                         </div>
                         <div>
                           <span className="text-xs font-bold text-slate-900 block leading-tight">
-                            Alat Penghapus Background Bingkai
+                            Alat Hapus & Pulihkan Background
                           </span>
                           <span className="text-[10px] text-slate-500 font-medium">
-                            Klik langsung pada gambar di samping untuk melubangi pigura (Magic Wand)
+                            Hapus background atau pulihkan kembali gambar asli
                           </span>
                         </div>
                       </div>
 
-                      {/* Undo & Reset Buttons */}
+                      {/* Undo, Redo & Pulihkan Asli Buttons */}
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
                           onClick={handleUndo}
                           disabled={historyStack.length === 0}
                           className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
-                          title="Batal langkah terakhir"
+                          title="Batal langkah terakhir (Undo)"
                         >
                           <Undo className="w-3 h-3 text-slate-600" />
                           <span>Undo</span>
                         </button>
                         <button
                           type="button"
-                          onClick={handleResetOriginal}
-                          disabled={!rawBase64Img || historyStack.length === 0}
+                          onClick={handleRedo}
+                          disabled={redoStack.length === 0}
                           className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
-                          title="Reset ke gambar awal sebelum diedit"
+                          title="Ulangi langkah (Redo)"
+                        >
+                          <Redo className="w-3 h-3 text-slate-600" />
+                          <span>Redo</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleResetOriginal}
+                          disabled={!rawBase64Img || (historyStack.length === 0 && redoStack.length === 0)}
+                          className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+                          title="Pulihkan seluruh gambar ke kondisi awal"
                         >
                           <RotateCcw className="w-3 h-3 text-slate-600" />
-                          <span>Reset</span>
+                          <span>Pulihkan Asli</span>
                         </button>
                       </div>
                     </div>
 
-                    {/* Quick Erase Action Buttons */}
-                    <div className="grid grid-cols-3 gap-2 pt-1">
+                    {/* Quick Erase & Restore Tool Buttons */}
+                    <div className="grid grid-cols-4 gap-2 pt-1">
                       <button
                         type="button"
                         onClick={() => {
@@ -2172,7 +2319,28 @@ export function AdminScreen({
                         <Wand2 className={`w-4 h-4 ${toolMode === "wand" && interactionMode === "erase" ? "text-white" : "text-blue-600"}`} />
                         <span className="text-[11px] font-bold leading-tight text-center">Magic Wand</span>
                         <span className={`text-[9px] ${toolMode === "wand" && interactionMode === "erase" ? "text-blue-100" : "text-slate-400"}`}>
-                          Klik Gambar
+                          Hapus Klik
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setToolMode("restore");
+                          setInteractionMode("erase");
+                          setPreviewTab("checkerboard");
+                        }}
+                        disabled={!activeCanvasData}
+                        className={`p-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs cursor-pointer border ${
+                          toolMode === "restore" && interactionMode === "erase"
+                            ? "bg-amber-600 text-white border-amber-700 shadow-amber-500/20"
+                            : "bg-white text-slate-800 border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        <Paintbrush className={`w-4 h-4 ${toolMode === "restore" && interactionMode === "erase" ? "text-white" : "text-amber-600"}`} />
+                        <span className="text-[11px] font-bold leading-tight text-center">Pulihkan</span>
+                        <span className={`text-[9px] ${toolMode === "restore" && interactionMode === "erase" ? "text-amber-100" : "text-slate-400"}`}>
+                          Kuas Usap
                         </span>
                       </button>
 
@@ -2199,52 +2367,90 @@ export function AdminScreen({
                       </button>
                     </div>
 
-                    {/* Custom Chroma Color & Tolerance */}
-                    <div className="pt-2 border-t border-slate-200/80 space-y-2">
-                      <div className="flex items-center justify-between text-[11px]">
-                        <span className="font-semibold text-slate-700">Toleransi Kepekaan Warna:</span>
-                        <span className="font-mono font-bold text-blue-600">{chromaTolerance}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="5"
-                        max="65"
-                        value={chromaTolerance}
-                        onChange={(e) => setChromaTolerance(Number(e.target.value))}
-                        className="w-full accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
-                      />
-
-                      <div className="flex items-center justify-between pt-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-slate-600 font-medium">Hapus Warna Tertentu:</span>
+                    {/* Sub-panel when Kuas Pulihkan is active */}
+                    {toolMode === "restore" && (
+                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2 animate-in fade-in">
+                        <div className="flex items-center justify-between text-xs font-bold text-amber-900">
+                          <span className="flex items-center gap-1.5">
+                            <Paintbrush className="w-3.5 h-3.5 text-amber-600" />
+                            Kuas Pulihkan (Kembalikan Gambar Asli)
+                          </span>
+                          <span className="font-mono text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded text-[11px]">
+                            {brushSize}px
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-amber-800 leading-tight">
+                          Gosok atau usap kuas pada area gambar yang bolong/transparan di sebelah kanan untuk memulihkan gambar aslinya.
+                        </p>
+                        <div className="flex items-center gap-2 pt-1">
+                          <span className="text-[10px] text-amber-800 font-semibold shrink-0">Ukuran Kuas:</span>
                           <input
-                            type="color"
-                            value={chromaColor}
-                            onChange={(e) => setChromaColor(e.target.value)}
-                            className="w-6 h-6 rounded border border-slate-200 cursor-pointer p-0.5"
-                            title="Pilih warna kustom"
+                            type="range"
+                            min="10"
+                            max="100"
+                            value={brushSize}
+                            onChange={(e) => setBrushSize(Number(e.target.value))}
+                            className="w-full accent-amber-600 h-1.5 bg-amber-200 rounded-lg cursor-pointer"
                           />
-                          <span className="text-[10px] font-mono text-slate-500">{chromaColor}</span>
+                          <div
+                            className="shrink-0 rounded-full border border-amber-500 bg-amber-400/40"
+                            style={{
+                              width: `${Math.min(24, Math.max(8, brushSize / 3.5))}px`,
+                              height: `${Math.min(24, Math.max(8, brushSize / 3.5))}px`,
+                            }}
+                          />
                         </div>
-
-                        <button
-                          type="button"
-                          onClick={() => handleEraseChosenColor(chromaColor)}
-                          disabled={!activeCanvasData}
-                          className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
-                        >
-                          Hapus Warna Ini
-                        </button>
                       </div>
+                    )}
 
-                      {/* Action status message */}
-                      {actionStatus && (
-                        <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800 font-medium animate-in fade-in flex items-center gap-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                          <span>{actionStatus}</span>
+                    {/* Custom Chroma Color & Tolerance (Shown when not in restore mode) */}
+                    {toolMode !== "restore" && (
+                      <div className="pt-2 border-t border-slate-200/80 space-y-2">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-semibold text-slate-700">Toleransi Kepekaan Warna:</span>
+                          <span className="font-mono font-bold text-blue-600">{chromaTolerance}%</span>
                         </div>
-                      )}
-                    </div>
+                        <input
+                          type="range"
+                          min="5"
+                          max="65"
+                          value={chromaTolerance}
+                          onChange={(e) => setChromaTolerance(Number(e.target.value))}
+                          className="w-full accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                        />
+
+                        <div className="flex items-center justify-between pt-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] text-slate-600 font-medium">Hapus Warna Tertentu:</span>
+                            <input
+                              type="color"
+                              value={chromaColor}
+                              onChange={(e) => setChromaColor(e.target.value)}
+                              className="w-6 h-6 rounded border border-slate-200 cursor-pointer p-0.5"
+                              title="Pilih warna kustom"
+                            />
+                            <span className="text-[10px] font-mono text-slate-500">{chromaColor}</span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleEraseChosenColor(chromaColor)}
+                            disabled={!activeCanvasData}
+                            className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
+                          >
+                            Hapus Warna Ini
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action status message */}
+                    {actionStatus && (
+                      <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800 font-medium animate-in fade-in flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>{actionStatus}</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* ─────── 2. PENANDA POSISI FOTO PENGUNJUNG (SLOT FOTO) ─────── */}
@@ -2363,17 +2569,35 @@ export function AdminScreen({
                     <button
                       type="button"
                       onClick={() => {
+                        setToolMode("wand");
                         setInteractionMode("erase");
                         setPreviewTab("checkerboard");
                       }}
                       className={`px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
-                        interactionMode === "erase" && previewTab === "checkerboard"
+                        toolMode === "wand" && interactionMode === "erase" && previewTab === "checkerboard"
                           ? "bg-blue-600 text-white shadow-xs"
                           : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                       }`}
                     >
                       <Wand2 className="w-3.5 h-3.5" />
-                      <span>1. Hapus Background (Magic Wand)</span>
+                      <span>1. Hapus (Wand)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setToolMode("restore");
+                        setInteractionMode("erase");
+                        setPreviewTab("checkerboard");
+                      }}
+                      className={`px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                        toolMode === "restore" && interactionMode === "erase" && previewTab === "checkerboard"
+                          ? "bg-amber-600 text-white shadow-xs"
+                          : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                      }`}
+                    >
+                      <Paintbrush className="w-3.5 h-3.5" />
+                      <span>2. Pulihkan (Kuas)</span>
                     </button>
 
                     <button
@@ -2389,7 +2613,7 @@ export function AdminScreen({
                       }`}
                     >
                       <Square className="w-3.5 h-3.5" />
-                      <span>2. Atur Posisi Foto ({photoBoxes.length})</span>
+                      <span>3. Atur Posisi Foto ({photoBoxes.length})</span>
                     </button>
                   </div>
 
@@ -2408,75 +2632,110 @@ export function AdminScreen({
                   </button>
                 </div>
 
-                {/* Live Preview Canvas Container */}
-                <div
-                  ref={previewContainerRef}
-                  onClick={interactionMode === "erase" ? handlePreviewImageClick : undefined}
-                  style={{
-                    aspectRatio: imageMeta ? `${imageMeta.width} / ${imageMeta.height}` : "2 / 3",
-                  }}
-                  className={`relative w-full max-h-[440px] mx-auto rounded-2xl overflow-hidden border border-slate-200 shadow-sm flex items-center justify-center select-none ${
-                    interactionMode === "erase" && activeCanvasData ? "cursor-crosshair" : "cursor-default"
-                  } ${
-                    previewTab === "checkerboard"
-                      ? "bg-[repeating-conic-gradient(#cbd5e1_0_25%,#fff_0_50%)] bg-[length:14px_14px]"
-                      : "bg-slate-900"
-                  }`}
-                >
-                  {/* Photo Simulation Layer: Render sample photos inside photo boxes */}
-                  {previewTab === "photos" && (
-                    <div className="absolute inset-0 z-0 pointer-events-none">
-                      {photoBoxes.map((box, i) => {
-                        const colors = [
-                          "from-sky-400 to-indigo-600",
-                          "from-pink-400 to-rose-600",
-                          "from-amber-400 to-orange-500",
-                          "from-emerald-400 to-teal-600",
-                          "from-purple-500 to-indigo-600",
-                          "from-cyan-400 to-blue-600",
-                          "from-fuchsia-400 to-pink-600",
-                          "from-yellow-400 to-amber-600",
-                        ];
-                        const colorClass = colors[i % colors.length];
+                {/* Dimension & Aspect Ratio info pill */}
+                {imageMeta && (
+                  <div className="flex items-center justify-between px-2 text-[11px] text-slate-500 font-medium">
+                    <span>Ukuran Frame: <strong className="font-mono text-slate-700">{imageMeta.width} × {imageMeta.height} px</strong></span>
+                    <span className="font-mono text-slate-600 bg-slate-200/70 px-2 py-0.5 rounded-full text-[10px]">
+                      Rasio {Math.round((imageMeta.width / imageMeta.height) * 100) / 100} : 1
+                    </span>
+                  </div>
+                )}
 
-                        return (
-                          <div
-                            key={box.id}
-                            className={`absolute rounded-lg bg-gradient-to-tr ${colorClass} flex flex-col items-center justify-center text-white shadow-inner opacity-95`}
-                            style={{
-                              left: `${box.x}%`,
-                              top: `${box.y}%`,
-                              width: `${box.w}%`,
-                              height: `${box.h}%`,
-                            }}
-                          >
-                            <Camera className="w-5 h-5 mb-0.5 opacity-90" />
-                            <span className="text-[10px] font-bold">Foto #{i + 1}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Frame Image Layer */}
-                  {activeCanvasData ? (
-                    <div className="relative w-full h-full z-10 flex items-center justify-center pointer-events-none">
-                      <img
-                        ref={previewImgRef}
-                        src={activeCanvasData}
-                        alt="Frame Preview"
-                        className="w-full h-full object-contain"
+                {/* Live Preview Canvas Outer Centering Container */}
+                <div className="w-full flex-1 flex items-center justify-center min-h-[320px] max-h-[500px] overflow-hidden">
+                  <div
+                    ref={previewContainerRef}
+                    onClick={interactionMode === "erase" && toolMode !== "restore" ? handlePreviewImageClick : undefined}
+                    onPointerDown={handleCanvasPointerDown}
+                    onPointerMove={handleCanvasPointerMove}
+                    onPointerUp={handleCanvasPointerUp}
+                    onPointerLeave={handleCanvasPointerLeave}
+                    style={{
+                      aspectRatio: imageMeta ? `${imageMeta.width} / ${imageMeta.height}` : "2 / 3",
+                      width: imageMeta && imageMeta.height > 0
+                        ? `min(100%, calc(480px * ${imageMeta.width} / ${imageMeta.height}))`
+                        : "100%",
+                      maxHeight: "480px",
+                    }}
+                    className={`relative max-w-full rounded-2xl overflow-hidden border border-slate-300 shadow-sm flex items-center justify-center select-none ${
+                      toolMode === "restore" && interactionMode === "erase"
+                        ? "cursor-none touch-none"
+                        : interactionMode === "erase" && activeCanvasData
+                        ? "cursor-crosshair"
+                        : "cursor-default"
+                    } ${
+                      previewTab === "checkerboard"
+                        ? "bg-[repeating-conic-gradient(#cbd5e1_0_25%,#fff_0_50%)] bg-[length:14px_14px]"
+                        : "bg-slate-900"
+                    }`}
+                  >
+                    {/* Circular Brush Cursor in Restore Mode */}
+                    {toolMode === "restore" && interactionMode === "erase" && brushCursor.visible && (
+                      <div
+                        className="absolute pointer-events-none rounded-full border-2 border-amber-500 bg-amber-400/25 shadow-xs -translate-x-1/2 -translate-y-1/2 z-40"
+                        style={{
+                          left: `${brushCursor.x}px`,
+                          top: `${brushCursor.y}px`,
+                          width: `${brushSize}px`,
+                          height: `${brushSize}px`,
+                        }}
                       />
-                    </div>
-                  ) : (
-                    <div className="p-6 text-center space-y-2 text-slate-400 z-10">
-                      <ImageIcon className="w-12 h-12 mx-auto opacity-40" />
-                      <p className="text-xs font-semibold text-slate-600">Belum ada gambar dipilih</p>
-                      <p className="text-[11px] text-slate-400 max-w-[220px] mx-auto">
-                        Pilih berkas frame di sebelah kiri untuk melihat pratinjau dan mengatur kotak foto
-                      </p>
-                    </div>
-                  )}
+                    )}
+                    {/* Photo Simulation Layer: Render sample photos inside photo boxes */}
+                    {previewTab === "photos" && (
+                      <div className="absolute inset-0 z-0 pointer-events-none">
+                        {photoBoxes.map((box, i) => {
+                          const colors = [
+                            "from-sky-400 to-indigo-600",
+                            "from-pink-400 to-rose-600",
+                            "from-amber-400 to-orange-500",
+                            "from-emerald-400 to-teal-600",
+                            "from-purple-500 to-indigo-600",
+                            "from-cyan-400 to-blue-600",
+                            "from-fuchsia-400 to-pink-600",
+                            "from-yellow-400 to-amber-600",
+                          ];
+                          const colorClass = colors[i % colors.length];
+
+                          return (
+                            <div
+                              key={box.id}
+                              className={`absolute rounded-lg bg-gradient-to-tr ${colorClass} flex flex-col items-center justify-center text-white shadow-inner opacity-95`}
+                              style={{
+                                left: `${box.x}%`,
+                                top: `${box.y}%`,
+                                width: `${box.w}%`,
+                                height: `${box.h}%`,
+                              }}
+                            >
+                              <Camera className="w-5 h-5 mb-0.5 opacity-90" />
+                              <span className="text-[10px] font-bold">Foto #{i + 1}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Frame Image Layer */}
+                    {activeCanvasData ? (
+                      <div className="relative w-full h-full z-10 flex items-center justify-center pointer-events-none">
+                        <img
+                          ref={previewImgRef}
+                          src={activeCanvasData}
+                          alt="Frame Preview"
+                          className="w-full h-full block object-fill"
+                        />
+                      </div>
+                    ) : (
+                      <div className="p-6 text-center space-y-2 text-slate-400 z-10">
+                        <ImageIcon className="w-12 h-12 mx-auto opacity-40" />
+                        <p className="text-xs font-semibold text-slate-600">Belum ada gambar dipilih</p>
+                        <p className="text-[11px] text-slate-400 max-w-[220px] mx-auto">
+                          Pilih berkas frame di sebelah kiri untuk melihat pratinjau dan mengatur kotak foto
+                        </p>
+                      </div>
+                    )}
 
                   {/* Photo Boxes Guides & Interactive Overlay */}
                   {activeCanvasData && (
@@ -2625,6 +2884,7 @@ export function AdminScreen({
                     </div>
                   )}
                 </div>
+              </div>
 
                 {/* Helper / Status Footer */}
                 <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">

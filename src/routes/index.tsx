@@ -1545,7 +1545,13 @@ function ShootScreen({
 
       {/* ── TOP-RIGHT: Preview strip ── */}
       <div
-        className={`absolute top-4 right-4 z-20 rounded overflow-hidden ${layoutConfig.cols === 2 ? "w-40" : "w-28"}`}
+        className={`absolute top-4 right-4 z-20 rounded overflow-hidden ${
+          overlayDimensions && overlayDimensions.w > overlayDimensions.h
+            ? "w-48 sm:w-56"
+            : layoutConfig.cols === 2
+            ? "w-40"
+            : "w-28"
+        }`}
         style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)", padding: "8px" }}
       >
         <div className="pixel text-white text-[9px] text-center mb-2">PRATINJAU</div>
@@ -1555,7 +1561,7 @@ function ShootScreen({
               aspectRatio: overlayDimensions ? `${overlayDimensions.w} / ${overlayDimensions.h}` : `${variantConfig?.w || 1} / ${variantConfig?.h || 1}`,
               background: "#1a1a2e"
             }}>
-              <img src={overlaySrc} className="absolute inset-0 w-full h-full object-cover pointer-events-none z-20" alt="" />
+              <img src={overlaySrc} className="absolute inset-0 w-full h-full object-fill pointer-events-none z-20" alt="" />
               {detectedHoles.map((h, i) => {
                 const photoIndex = layout === "4x2" ? Math.floor(i / 2) : i;
                 return (
@@ -2430,14 +2436,24 @@ function ResultScreen({
       <div className="w-full grid md:grid-cols-2 gap-8 items-start">
         {/* Strip preview */}
         <div className="flex flex-col items-center">
-          <div className="pixel-box p-4 overflow-hidden w-full max-w-[320px]" style={{ background: "var(--color-blush)" }}>
+          <div
+            className={`pixel-box p-4 overflow-hidden w-full transition-all ${
+              overlayDimensions && overlayDimensions.w > overlayDimensions.h
+                ? "max-w-[460px]"
+                : "max-w-[320px]"
+            }`}
+            style={{ background: "var(--color-blush)" }}
+          >
             <div className="pixel text-[10px] text-center mb-3">★ FOTO STRIP ★</div>
             <div className="overflow-hidden relative flex justify-center" style={{ background: "var(--color-ink)", padding: "6px" }}>
               <img
                 src={strip}
                 alt="strip foto"
-                className="slot-out block w-full max-w-[260px] object-contain"
-                style={{ imageRendering: "pixelated" }}
+                className="slot-out block w-full max-h-[70vh] object-contain"
+                style={{
+                  aspectRatio: overlayDimensions ? `${overlayDimensions.w} / ${overlayDimensions.h}` : undefined,
+                  imageRendering: "pixelated",
+                }}
               />
             </div>
             <div className="pixel text-[9px] text-center mt-3">YODHA-PHOTOBOOTH ©</div>
