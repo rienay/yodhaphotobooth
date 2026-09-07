@@ -2037,7 +2037,12 @@ function ResultScreen({
         try {
           if (active) setUploadStatus("uploading_db");
           const path = `photos/${sessionCode}_strip.png`;
-          finalStripUrl = await uploadToStorage(strip, path, "image/png");
+          try {
+            finalStripUrl = await uploadToStorage(strip, path, "image/png");
+          } catch (sErr) {
+            console.warn("Storage strip upload failed, using direct image fallback:", sErr);
+            finalStripUrl = strip;
+          }
 
           // Upload raw photos taken by camera
           if (active) setUploadStatus("uploading_raw");
@@ -2057,10 +2062,15 @@ function ResultScreen({
             const gifBase64 = await generateGifFromPhotos(photos);
             if (gifBase64) {
               const gifPath = `photos/${sessionCode}_animated.gif`;
-              finalGifUrl = await uploadToStorage(gifBase64, gifPath, "image/gif");
+              try {
+                finalGifUrl = await uploadToStorage(gifBase64, gifPath, "image/gif");
+              } catch (gErr) {
+                console.warn("GIF storage upload failed, using base64 fallback:", gErr);
+                finalGifUrl = gifBase64;
+              }
             }
           } catch (gifErr) {
-            console.warn("GIF generation/upload warning:", gifErr);
+            console.warn("GIF generation warning:", gifErr);
           }
 
           // Save session to database table photobooth_sessions

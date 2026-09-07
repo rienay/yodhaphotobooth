@@ -245,24 +245,31 @@ export class SessionDB {
     // Save to Supabase if configured
     if (isSupabaseConfigured() && supabase) {
       try {
+        const isUuid = sessionData.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionData.id);
+        const insertPayload: any = {
+          session_code: sessionData.session_code,
+          layout: sessionData.layout,
+          variant: sessionData.variant || "",
+          strip_url: sessionData.strip_url,
+          gif_url: sessionData.gif_url || null,
+          live_photo_url: sessionData.live_photo_url || null,
+          raw_photos: sessionData.raw_photos || [],
+          total_photos: sessionData.total_photos || 0,
+          created_at: sessionData.created_at,
+        };
+        if (isUuid) {
+          insertPayload.id = sessionData.id;
+        }
+
         const { data, error } = await supabase
           .from("photobooth_sessions")
-          .insert({
-            id: sessionData.id,
-            session_code: sessionData.session_code,
-            layout: sessionData.layout,
-            variant: sessionData.variant || "",
-            strip_url: sessionData.strip_url,
-            gif_url: sessionData.gif_url || null,
-            live_photo_url: sessionData.live_photo_url || null,
-            raw_photos: sessionData.raw_photos || [],
-            total_photos: sessionData.total_photos || 0,
-            created_at: sessionData.created_at,
-          })
+          .insert(insertPayload)
           .select()
           .single();
 
-        if (!error && data) {
+        if (error) {
+          console.warn("Supabase save session warning:", error.message, error.details);
+        } else if (data) {
           sessionData.id = data.id;
         }
       } catch (err) {
@@ -310,16 +317,26 @@ export class SessionDB {
   async getSessionByCode(code: string): Promise<PhotoboothSession | null> {
     if (isSupabaseConfigured() && supabase) {
       try {
-        const { data, error } = await supabase
-          .from("photobooth_sessions")
-          .select("*")
-          .or(`session_code.eq.${code},id.eq.${code}`)
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(code);
+        let query = supabase.from("photobooth_sessions").select("*");
+
+        if (isUuid) {
+          query = query.or(`session_code.eq.${code},id.eq.${code}`);
+        } else {
+          // Never compare non-UUID string to UUID column to avoid Postgres error 22P02
+          query = query.eq("session_code", code);
+        }
+
+        const { data, error } = await query
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle();
 
         if (!error && data) {
           return data;
+        }
+        if (error) {
+          console.warn("Supabase fetch session error:", error.message, error.details);
         }
       } catch (err) {
         console.warn("Failed to fetch session from Supabase:", err);
