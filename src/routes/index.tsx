@@ -2064,91 +2064,105 @@ function ResultScreen({
       if (isSupabaseConfigured()) {
         try {
           if (active) setUploadStatus("uploading_db");
-          const path = `photos/${sessionCode}_strip.jpg`;
-          try {
-            // Compress photostrip to high-quality JPEG Blob for 20x faster upload (from 6MB down to ~350KB)
-            const compressedBlob = await compressDataUrlToJpegBlob(strip, 0.92, 1800);
-            finalStripUrl = await uploadToStorage(compressedBlob, path, "image/jpeg");
-          } catch (sErr) {
-            console.warn("Storage strip upload failed, using direct image fallback:", sErr);
-            finalStripUrl = strip;
+
+          // 1. Upload photostrip terkompresi (cepat ~350KB)
+          const uploadStripPromise = (async () => {
+            const path = `photos/${sessionCode}_strip.jpg`;
+            try {
+              const compressedBlob = await compressDataUrlToJpegBlob(strip, 0.92, 1800);
+              return await uploadToStorage(compressedBlob, path, "image/jpeg");
+            } catch (sErr) {
+              console.warn("Storage strip upload fallback:", sErr);
+              return strip;
+            }
+          })();
+
+          // 2. Upload raw photos secara paralel (dengan fallback foto aman jika storage terkendala)
+          const uploadRawPromise = Promise.all(
+            photos.map(async (p, i) => {
+              try {
+                const compressed = await compressDataUrlToJpegBlob(p, 0.90, 1280);
+                return await uploadToStorage(compressed, `photos/${sessionCode}_raw_${i + 1}.jpg`, "image/jpeg");
+              } catch (err) {
+                console.warn(`Raw photo ${i + 1} fallback:`, err);
+                return p;
+              }
+            })
+          );
+
+          // 3. Upload live videos secara paralel (format MP4 HD dengan fallback aman)
+          const uploadVideosPromise = Promise.all(
+            (liveVideos || []).map(async (v, i) => {
+              if (!v) return "";
+              try {
+                return await uploadToStorage(v, `photos/${sessionCode}_live_${i + 1}.mp4`, "video/mp4");
+              } catch (err) {
+                console.warn(`Live video ${i + 1} fallback:`, err);
+                return v;
+              }
+            })
+          );
+
+          // 4. Generate & upload GIF 12s (foto murni tanpa frame, rasio asli kamera)
+          const uploadGifPromise = (async () => {
+            try {
+              const gifBase64 = await generateGifFromPhotos(photos, 640, 500, 12000);
+              if (gifBase64) {
+                try {
+                  return await uploadToStorage(gifBase64, `photos/${sessionCode}_animation.gif`, "image/gif");
+                } catch {
+                  return gifBase64;
+                }
+              }
+            } catch (gifErr) {
+              console.warn("GIF generation error:", gifErr);
+            }
+            return undefined;
+          })();
+
+          // Jalankan seluruh upload secara paralel (selesai dalam 1-2 detik!)
+          const [finalStripUrl, uploadedRawUrls, uploadedVideoUrls, finalGifUrl] = await Promise.all([
+            uploadStripPromise,
+            uploadRawPromise,
+            uploadVideosPromise,
+            uploadGifPromise,
+          ]);
+
+          // 5. Composite live video frame jika template overlay ada (format MP4 HD)
+          let framedLiveVideoUrl = uploadedVideoUrls[0] || undefined;
+          if (liveVideos && liveVideos.length > 0 && overlaySrc) {
+            try {
+              const framedVideoData = await composeLiveVideoFrame(overlaySrc, liveVideos, layout);
+              if (framedVideoData) {
+                try {
+                  framedLiveVideoUrl = await uploadToStorage(framedVideoData, `photos/${sessionCode}_framed_live.mp4`, "video/mp4");
+                } catch {
+                  framedLiveVideoUrl = framedVideoData;
+                }
+              }
+            } catch (lvErr) {
+              console.warn("Framed live video error:", lvErr);
+            }
           }
 
-          // Clean template URL so huge base64 is never inserted into database rows
           const cleanTemplateUrl = overlaySrc && !overlaySrc.startsWith("data:") ? overlaySrc : undefined;
 
-          // FAST-PATH: Langsung simpan data sesi awal ke database agar QR Code segera muncul dan bisa di-scan HP!
+          // SIMPAN SELURUH DATA LENGKAP (FOTO ASLI, LIVE VIDEO, GIF, STRIP) DALAM 1 ATOMIC INSERT!
           await sessionDB.saveSession({
             session_code: sessionCode,
             layout,
             variant,
             template_url: cleanTemplateUrl,
             strip_url: finalStripUrl,
-            gif_url: undefined,
-            live_photo_url: undefined,
-            live_videos: [],
-            raw_photos: [],
+            gif_url: finalGifUrl,
+            live_photo_url: framedLiveVideoUrl,
+            live_videos: uploadedVideoUrls.filter(Boolean),
+            raw_photos: uploadedRawUrls.filter(Boolean),
             total_photos: photos.length,
           });
 
           dbSaved = true;
-          // QR Code LANGSUNG MUNCUL (< 1-2 detik)!
           if (active) setUploadStatus("success");
-
-          // BACKGROUND ASYNC: Upload foto mentah, video live, dan generate GIF tanpa menahan QR code
-          (async () => {
-            try {
-              // Upload raw photos secara paralel (cepat & terkompresi)
-              const rawPromises = photos.map(async (p, i) => {
-                try {
-                  const compressed = await compressDataUrlToJpegBlob(p, 0.90, 1280);
-                  return await uploadToStorage(compressed, `photos/${sessionCode}_raw_${i + 1}.jpg`, "image/jpeg");
-                } catch {
-                  return null;
-                }
-              });
-              const uploadedRawUrls = (await Promise.all(rawPromises)).filter(Boolean) as string[];
-
-              // Upload live videos secara paralel (cepat & format MP4)
-              const videoPromises = (liveVideos || []).map((v, i) =>
-                v ? uploadToStorage(v, `photos/${sessionCode}_live_${i + 1}.mp4`, "video/mp4").catch(() => "") : Promise.resolve("")
-              );
-              const uploadedVideoUrls = (await Promise.all(videoPromises)).filter(Boolean);
-
-              // Perbarui database sesi dengan foto asli dan video live
-              await sessionDB.updateSession(sessionCode, {
-                raw_photos: uploadedRawUrls,
-                live_videos: uploadedVideoUrls,
-                live_photo_url: uploadedVideoUrls[0] || undefined,
-              });
-
-              // 1. Generate GIF 12s: Isinya foto-foto asli diulang-ulang tanpa frame, rasio sesuai kamera
-              try {
-                const gifBase64 = await generateGifFromPhotos(photos, 640, 500, 12000);
-                if (gifBase64) {
-                  const finalGif = await uploadToStorage(gifBase64, `photos/${sessionCode}_animation.gif`, "image/gif");
-                  await sessionDB.updateSession(sessionCode, { gif_url: finalGif });
-                }
-              } catch (gifErr) {
-                console.warn("GIF generation warning:", gifErr);
-              }
-
-              // 2. Composite live video frame jika template overlay ada: Format MP4 HD
-              if (liveVideos && liveVideos.length > 0 && overlaySrc) {
-                try {
-                  const framedVideoData = await composeLiveVideoFrame(overlaySrc, liveVideos, layout);
-                  if (framedVideoData) {
-                    const framedLiveVideoUrl = await uploadToStorage(framedVideoData, `photos/${sessionCode}_framed_live.mp4`, "video/mp4");
-                    await sessionDB.updateSession(sessionCode, { live_photo_url: framedLiveVideoUrl });
-                  }
-                } catch (lvErr) {
-                  console.warn("Framed live video warning:", lvErr);
-                }
-              }
-            } catch (bgErr) {
-              console.warn("Background upload processing warning:", bgErr);
-            }
-          })();
         } catch (dbErr) {
           console.warn("Supabase upload/save warning, fallback to local:", dbErr);
         }
@@ -2156,13 +2170,18 @@ function ResultScreen({
 
       // 2. Fallback: Save session to local database cache if offline or not configured
       if (!dbSaved) {
+        let fallbackGif: string | undefined = undefined;
+        try {
+          fallbackGif = await generateGifFromPhotos(photos, 640, 500, 12000);
+        } catch {}
+
         await sessionDB.saveSession({
           session_code: sessionCode,
           layout,
           variant,
-          template_url: overlaySrc || undefined,
+          template_url: overlaySrc && !overlaySrc.startsWith("data:") ? overlaySrc : undefined,
           strip_url: strip,
-          gif_url: undefined,
+          gif_url: fallbackGif,
           live_photo_url: liveVideos[0] || photos[0],
           live_videos: liveVideos || [],
           raw_photos: photos,
