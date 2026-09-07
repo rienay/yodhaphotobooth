@@ -27,6 +27,10 @@ import {
   Sliders,
   CheckCircle2,
   AlertTriangle,
+  Pipette,
+  Wand2,
+  Eye,
+  Layers,
 } from "lucide-react";
 
 export interface Template {
@@ -119,6 +123,19 @@ export function AdminScreen({
   const [base64Img, setBase64Img] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Chroma Key / Auto Background Remover state
+  const [rawBase64Img, setRawBase64Img] = useState("");
+  const [enableChromaKey, setEnableChromaKey] = useState(false);
+  const [chromaColor, setChromaColor] = useState("#00FF00"); // default bright green
+  const [chromaTolerance, setChromaTolerance] = useState(30); // 1 - 80%
+  const [chromaFeather, setChromaFeather] = useState(8); // 0 - 20%
+  const [isProcessingChroma, setIsProcessingChroma] = useState(false);
+  const [previewTab, setPreviewTab] = useState<"checkerboard" | "photos">("checkerboard");
+  const [isEyedropperActive, setIsEyedropperActive] = useState(false);
+  const [imageMeta, setImageMeta] = useState<{ width: number; height: number; isAutoGreen?: boolean } | null>(null);
+  const originalImageRef = useRef<HTMLImageElement | null>(null);
+  const previewImgRef = useRef<HTMLImageElement | null>(null);
 
   // Device & Camera settings
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -252,24 +269,235 @@ export function AdminScreen({
     setNewPreset(HOLE_PRESETS[layout][0].id);
   };
 
+  // Helper: Convert HEX to RGB
+  const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
+    let clean = hex.replace("#", "").trim();
+    if (clean.length === 3) {
+      clean = clean.split("").map((c) => c + c).join("");
+    }
+    const num = parseInt(clean, 16);
+    if (isNaN(num)) return { r: 0, g: 255, b: 0 };
+    return {
+      r: (num >> 16) & 255,
+      g: (num >> 8) & 255,
+      b: num & 255,
+    };
+  };
+
+  // Helper: Convert RGB to HEX
+  const rgbToHex = (r: number, g: number, b: number): string => {
+    const toHex = (n: number) =>
+      Math.max(0, Math.min(255, Math.round(n)))
+        .toString(16)
+        .padStart(2, "0");
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  };
+
+  // Helper: Detect if image contains green screen background
+  const detectIfGreenOrSolid = (img: HTMLImageElement): { isGreen: boolean; suggestedColor: string } => {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 40;
+      canvas.height = 40;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return { isGreen: false, suggestedColor: "#00FF00" };
+      ctx.drawImage(img, 0, 0, 40, 40);
+      const data = ctx.getImageData(0, 0, 40, 40).data;
+      let greenCount = 0;
+      const totalPixels = 40 * 40;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        if (g > 130 && g > r * 1.25 && g > b * 1.25) {
+          greenCount++;
+        }
+      }
+      if (greenCount / totalPixels > 0.05) {
+        return { isGreen: true, suggestedColor: "#00FF00" };
+      }
+    } catch (e) {
+      console.warn("Chroma detection error:", e);
+    }
+    return { isGreen: false, suggestedColor: "#00FF00" };
+  };
+
+  // Chroma Key Algorithm: Euclidean distance in RGB color space
+  const applyChromaKey = (
+    srcImg: HTMLImageElement,
+    colorHex: string,
+    tolerance: number,
+    feather: number
+  ): string => {
+    const canvas = document.createElement("canvas");
+    const width = srcImg.naturalWidth || srcImg.width || 1200;
+    const height = srcImg.naturalHeight || srcImg.height || 1800;
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return srcImg.src;
+
+    ctx.drawImage(srcImg, 0, 0, width, height);
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
+
+    const { r: tr, g: tg, b: tb } = hexToRgb(colorHex);
+
+    // Max Euclidean distance in RGB: sqrt(255^2 * 3) ≈ 441.67
+    const maxDist = 441.67;
+    const thresholdDist = (tolerance / 100) * maxDist;
+    const featherDist = (feather / 100) * maxDist;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const a = data[i + 3];
+      if (a === 0) continue;
+
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+
+      const dr = r - tr;
+      const dg = g - tg;
+      const db = b - tb;
+      const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+
+      if (dist <= thresholdDist) {
+        data[i + 3] = 0; // completely transparent
+      } else if (featherDist > 0 && dist < thresholdDist + featherDist) {
+        const factor = (dist - thresholdDist) / featherDist;
+        data[i + 3] = Math.round(a * factor); // soft edge
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+    return canvas.toDataURL("image/png");
+  };
+
+  // Re-process image whenever chroma key settings or raw image change
+  useEffect(() => {
+    if (!rawBase64Img) {
+      setBase64Img("");
+      return;
+    }
+
+    if (!enableChromaKey) {
+      setBase64Img(rawBase64Img);
+      return;
+    }
+
+    setIsProcessingChroma(true);
+    const timer = setTimeout(() => {
+      const img = originalImageRef.current;
+      if (!img) {
+        const tempImg = new Image();
+        tempImg.onload = () => {
+          originalImageRef.current = tempImg;
+          const result = applyChromaKey(tempImg, chromaColor, chromaTolerance, chromaFeather);
+          setBase64Img(result);
+          setIsProcessingChroma(false);
+        };
+        tempImg.src = rawBase64Img;
+      } else {
+        const result = applyChromaKey(img, chromaColor, chromaTolerance, chromaFeather);
+        setBase64Img(result);
+        setIsProcessingChroma(false);
+      }
+    }, 40);
+
+    return () => clearTimeout(timer);
+  }, [rawBase64Img, enableChromaKey, chromaColor, chromaTolerance, chromaFeather]);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      setUploadError("Berkas harus berupa gambar PNG transparan!");
+      setUploadError("Berkas harus berupa gambar (PNG, JPG, WEBP)!");
       return;
     }
 
     setUploadError("");
     const reader = new FileReader();
     reader.onload = (event) => {
-      setBase64Img(event.target?.result as string);
+      const dataUrl = event.target?.result as string;
+      setRawBase64Img(dataUrl);
+
+      const img = new Image();
+      img.onload = () => {
+        originalImageRef.current = img;
+        const detection = detectIfGreenOrSolid(img);
+        setImageMeta({
+          width: img.naturalWidth || img.width,
+          height: img.naturalHeight || img.height,
+          isAutoGreen: detection.isGreen,
+        });
+
+        if (detection.isGreen) {
+          setChromaColor(detection.suggestedColor);
+          setEnableChromaKey(true);
+        }
+      };
+      img.src = dataUrl;
     };
     reader.onerror = () => {
       setUploadError("Gagal membaca file gambar.");
     };
     reader.readAsDataURL(file);
+  };
+
+  // Eyedropper: Sample color by clicking directly on preview image
+  const handlePreviewImageClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!rawBase64Img || !originalImageRef.current) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const xRatio = (e.clientX - rect.left) / rect.width;
+    const yRatio = (e.clientY - rect.top) / rect.height;
+
+    const img = originalImageRef.current;
+    const naturalX = Math.floor(xRatio * (img.naturalWidth || img.width));
+    const naturalY = Math.floor(yRatio * (img.naturalHeight || img.height));
+
+    const sampleCanvas = document.createElement("canvas");
+    sampleCanvas.width = 1;
+    sampleCanvas.height = 1;
+    const sCtx = sampleCanvas.getContext("2d", { willReadFrequently: true });
+    if (!sCtx) return;
+
+    sCtx.drawImage(img, naturalX, naturalY, 1, 1, 0, 0, 1, 1);
+    const p = sCtx.getImageData(0, 0, 1, 1).data;
+    const sampledHex = rgbToHex(p[0], p[1], p[2]);
+    setChromaColor(sampledHex);
+    setEnableChromaKey(true);
+    setIsEyedropperActive(false);
+  };
+
+  const handleNativeEyeDropper = async () => {
+    if ("EyeDropper" in window) {
+      try {
+        const eyeDropper = new (window as any).EyeDropper();
+        const result = await eyeDropper.open();
+        if (result?.sRGBHex) {
+          setChromaColor(result.sRGBHex);
+          setEnableChromaKey(true);
+        }
+      } catch (err) {
+        // User cancelled picker
+      }
+    } else {
+      setIsEyedropperActive((prev) => !prev);
+    }
+  };
+
+  const handleCloseUploadModal = () => {
+    setShowUploadModal(false);
+    setNewName("");
+    setRawBase64Img("");
+    setBase64Img("");
+    setEnableChromaKey(false);
+    setUploadError("");
+    setIsEyedropperActive(false);
+    setImageMeta(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleSaveTemplate = async (e: React.FormEvent) => {
@@ -278,19 +506,16 @@ export function AdminScreen({
       setUploadError("Nama template harus diisi!");
       return;
     }
-    if (!base64Img) {
-      setUploadError("Gambar frame (.png) transparan wajib diunggah!");
+    const finalImg = enableChromaKey ? base64Img : (base64Img || rawBase64Img);
+    if (!finalImg) {
+      setUploadError("Gambar frame wajib diunggah!");
       return;
     }
 
     setIsSubmitting(true);
     try {
-      await onAddTemplate(newName.trim(), newLayout, newPreset, base64Img);
-      setNewName("");
-      setBase64Img("");
-      setUploadError("");
-      setShowUploadModal(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      await onAddTemplate(newName.trim(), newLayout, newPreset, finalImg);
+      handleCloseUploadModal();
       alert("Template bingkai berhasil ditambahkan ke Database!");
     } catch (err) {
       console.error(err);
@@ -1029,119 +1254,464 @@ export function AdminScreen({
         </div>
       </div>
 
-      {/* ──────────────── MODAL UNGGAH FRAME BARU ──────────────── */}
+      {/* ──────────────── MODAL UNGGAH & KONFIGURASI FRAME BARU ──────────────── */}
       {showUploadModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-bold text-slate-900">Unggah Frame Bingkai Baru</h3>
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 md:p-6 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-4xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <Wand2 className="w-4 h-4 text-blue-600" />
+                  <span>Unggah & Konfigurasi Bingkai Baru</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Upload file PNG transparan atau gambar dengan warna latar (hijau/putih) untuk dihapus otomatis
+                </p>
+              </div>
               <button
-                onClick={() => setShowUploadModal(false)}
-                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                onClick={handleCloseUploadModal}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                title="Tutup Modal"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveTemplate} className="space-y-4">
-              <div className="space-y-1">
-                <label className="block text-xs font-semibold text-slate-700">Nama Template</label>
-                <input
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Contoh: Frame Event Wisuda 2026"
-                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+            {/* Modal Body: 2 Columns */}
+            <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
+              {/* ─────── LEFT COLUMN: Form Inputs & Chroma Key Controls ─────── */}
+              <div className="lg:col-span-6 p-6 space-y-4">
+                <form onSubmit={handleSaveTemplate} id="frame-upload-form" className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-slate-700">Nama Template Bingkai</label>
+                    <input
+                      type="text"
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      placeholder="Contoh: Frame Event Wisuda 2026"
+                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="block text-xs font-semibold text-slate-700">Layout</label>
-                  <select
-                    value={newLayout}
-                    onChange={(e) => handleLayoutChange(e.target.value as any)}
-                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-                  >
-                    <option value="3x1">Strip Vertikal (3x1)</option>
-                    <option value="3x2">Grid 6 Foto (3x2)</option>
-                    <option value="2x2">Grid 2x2 (2x2)</option>
-                    <option value="2x1">Strip Pendek (2x1)</option>
-                    <option value="1x1">Foto Tunggal (1x1)</option>
-                    <option value="4x2">Grid 8 Foto (4x2)</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block text-xs font-semibold text-slate-700">Preset Lubang</label>
-                  <select
-                    value={newPreset}
-                    onChange={(e) => setNewPreset(e.target.value)}
-                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-                  >
-                    {HOLE_PRESETS[newLayout].map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-xs font-semibold text-slate-700">Berkas Frame PNG</label>
-                <input
-                  type="file"
-                  accept=".png,image/png"
-                  onChange={handleFileChange}
-                  ref={fileInputRef}
-                  className="hidden"
-                />
-                <div
-                  onClick={() => fileInputRef.current?.click()}
-                  className="border-2 border-dashed border-slate-200 hover:border-blue-500 rounded-xl p-4 text-center cursor-pointer bg-slate-50 hover:bg-blue-50/40 transition-colors"
-                >
-                  {base64Img ? (
+                  <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
+                      <label className="block text-xs font-semibold text-slate-700">Tata Letak (Layout)</label>
+                      <select
+                        value={newLayout}
+                        onChange={(e) => handleLayoutChange(e.target.value as any)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                      >
+                        <option value="3x1">Strip Vertikal (3x1)</option>
+                        <option value="3x2">Grid 6 Foto (3x2)</option>
+                        <option value="2x2">Grid 2x2 (2x2)</option>
+                        <option value="2x1">Strip Pendek (2x1)</option>
+                        <option value="1x1">Foto Tunggal (1x1)</option>
+                        <option value="4x2">Grid 8 Foto (4x2)</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block text-xs font-semibold text-slate-700">Preset Lubang Foto</label>
+                      <select
+                        value={newPreset}
+                        onChange={(e) => setNewPreset(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                      >
+                        {HOLE_PRESETS[newLayout].map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* File Upload Box */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-semibold text-slate-700">Berkas Frame (PNG, JPG, WEBP)</label>
+                      {imageMeta && (
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {imageMeta.width} × {imageMeta.height} px
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/webp"
+                      onChange={handleFileChange}
+                      ref={fileInputRef}
+                      className="hidden"
+                    />
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className={`border-2 border-dashed rounded-xl p-3.5 text-center cursor-pointer transition-colors ${
+                        rawBase64Img
+                          ? "border-blue-400 bg-blue-50/20 hover:bg-blue-50/40"
+                          : "border-slate-200 hover:border-blue-500 bg-slate-50 hover:bg-blue-50/30"
+                      }`}
+                    >
+                      {rawBase64Img ? (
+                        <div className="flex items-center justify-center gap-3">
+                          <img
+                            src={base64Img || rawBase64Img}
+                            alt="Thumbnail"
+                            className="w-10 h-10 object-contain rounded border border-slate-200 bg-[repeating-conic-gradient(#cbd5e1_0_25%,#fff_0_50%)] bg-[length:6px_6px]"
+                          />
+                          <div className="text-left">
+                            <span className="text-xs font-bold text-slate-800 block">Gambar Berhasil Dimuat</span>
+                            <span className="text-[11px] text-blue-600 font-medium hover:underline">Klik untuk ganti gambar</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="py-2 space-y-1">
+                          <Plus className="w-5 h-5 text-slate-400 mx-auto" />
+                          <span className="text-xs font-semibold text-slate-700 block">Pilih Gambar Frame (PNG, JPG, WEBP)</span>
+                          <span className="text-[10px] text-slate-400 block">Dapat berupa gambar transparan atau gambar dengan latar hijau/polos</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ─────── CHROMA KEY / AUTO BACKGROUND REMOVER PANEL ─────── */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                          <Sparkles className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 block leading-tight">
+                            Hapus Background Warna
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            Chroma Key otomatis untuk latar hijau / warna lain
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Toggle Switch */}
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={enableChromaKey}
+                          onChange={(e) => setEnableChromaKey(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                      </label>
+                    </div>
+
+                    {enableChromaKey && (
+                      <div className="pt-2 border-t border-slate-200/80 space-y-3 animate-in fade-in duration-200">
+                        {/* Quick Presets & Color Picker */}
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-semibold text-slate-700">Warna yang Dihapus:</label>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setChromaColor("#00FF00")}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                                chromaColor.toUpperCase() === "#00FF00"
+                                  ? "bg-emerald-500 text-white border-emerald-600 shadow-xs"
+                                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              <span className="w-2.5 h-2.5 rounded-full bg-[#00FF00] border border-black/20"></span>
+                              <span>Hijau</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setChromaColor("#FFFFFF")}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                                chromaColor.toUpperCase() === "#FFFFFF"
+                                  ? "bg-slate-800 text-white border-slate-900 shadow-xs"
+                                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              <span className="w-2.5 h-2.5 rounded-full bg-white border border-slate-300"></span>
+                              <span>Putih</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setChromaColor("#0000FF")}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                                chromaColor.toUpperCase() === "#0000FF"
+                                  ? "bg-blue-600 text-white border-blue-700 shadow-xs"
+                                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                              }`}
+                            >
+                              <span className="w-2.5 h-2.5 rounded-full bg-[#0000FF] border border-black/20"></span>
+                              <span>Biru</span>
+                            </button>
+
+                            {/* Native Eyedropper or Canvas Pipet */}
+                            <button
+                              type="button"
+                              onClick={handleNativeEyeDropper}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 border transition-all cursor-pointer ${
+                                isEyedropperActive
+                                  ? "bg-purple-600 text-white border-purple-700 ring-2 ring-purple-400/40"
+                                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                              }`}
+                              title="Klik untuk memilih warna langsung dari gambar"
+                            >
+                              <Pipette className="w-3.5 h-3.5 text-purple-600" />
+                              <span>{isEyedropperActive ? "Klik Gambar" : "Pipet Warna"}</span>
+                            </button>
+
+                            {/* Color Picker input */}
+                            <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-0.5 ml-auto">
+                              <input
+                                type="color"
+                                value={chromaColor}
+                                onChange={(e) => setChromaColor(e.target.value)}
+                                className="w-5 h-5 rounded cursor-pointer border-none bg-transparent p-0"
+                              />
+                              <span className="font-mono text-[10px] text-slate-600 uppercase font-bold">{chromaColor}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Sliders: Tolerance & Feather */}
+                        <div className="space-y-2 pt-1">
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="font-semibold text-slate-700">Toleransi Warna (Threshold)</span>
+                              <span className="font-mono font-bold text-blue-600">{chromaTolerance}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="5"
+                              max="75"
+                              value={chromaTolerance}
+                              onChange={(e) => setChromaTolerance(Number(e.target.value))}
+                              className="w-full accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="font-semibold text-slate-700">Kehalusan Tepi (Feather)</span>
+                              <span className="font-mono font-bold text-blue-600">{chromaFeather}%</span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="20"
+                              value={chromaFeather}
+                              onChange={(e) => setChromaFeather(Number(e.target.value))}
+                              className="w-full accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="p-2 rounded-lg bg-blue-50/80 border border-blue-100 text-[10px] text-blue-700 font-medium">
+                          💡 <strong>Tip Praktis:</strong> Anda juga bisa mengklik langsung pada warna hijau di gambar pratinjau samping untuk memilih warna yang ingin dijadikan transparan.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {uploadError && (
+                    <p className="text-xs text-red-600 font-medium bg-red-50 p-2.5 rounded-xl border border-red-200">
+                      {uploadError}
+                    </p>
+                  )}
+                </form>
+              </div>
+
+              {/* ─────── RIGHT COLUMN: Interactive Live Preview ─────── */}
+              <div className="lg:col-span-6 p-6 bg-slate-50/50 flex flex-col justify-between space-y-4">
+                {/* Preview Controls Header */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      <Eye className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Pratinjau Live Frame</span>
+                    </h4>
+                    <span className="text-[10px] text-slate-400">
+                      {enableChromaKey ? "Mode Transparansi Aktif" : "Pratinjau Asli"}
+                    </span>
+                  </div>
+
+                  {/* Mode switcher: Checkerboard vs Realistic Photos */}
+                  <div className="flex items-center bg-white border border-slate-200 rounded-lg p-0.5 text-[11px] shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTab("checkerboard")}
+                      className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${
+                        previewTab === "checkerboard"
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      Transparansi
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTab("photos")}
+                      className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${
+                        previewTab === "photos"
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      Simulasi Foto
+                    </button>
+                  </div>
+                </div>
+
+                {/* Live Preview Display Box */}
+                <div
+                  onClick={handlePreviewImageClick}
+                  className={`relative w-full aspect-[2/3] max-h-[380px] mx-auto rounded-2xl overflow-hidden border border-slate-200/90 shadow-sm flex items-center justify-center select-none ${
+                    isEyedropperActive ? "cursor-crosshair ring-2 ring-purple-500" : rawBase64Img ? "cursor-pointer" : ""
+                  } ${
+                    previewTab === "checkerboard"
+                      ? "bg-[repeating-conic-gradient(#cbd5e1_0_25%,#fff_0_50%)] bg-[length:14px_14px]"
+                      : "bg-slate-900"
+                  }`}
+                  title={rawBase64Img ? "Klik di bagian warna untuk mengambil warna pipet" : undefined}
+                >
+                  {/* Sample Photo Placeholder Layer (Behind the frame) */}
+                  {previewTab === "photos" && (
+                    <div className="absolute inset-0 z-0 p-3 pointer-events-none">
+                      {newLayout === "3x1" && (
+                        <div className="w-full h-full flex flex-col gap-2 justify-between">
+                          {[1, 2, 3].map((num) => (
+                            <div key={num} className="flex-1 rounded-xl bg-gradient-to-tr from-sky-400 to-indigo-600 flex flex-col items-center justify-center text-white shadow-inner opacity-90">
+                              <Camera className="w-5 h-5 mb-0.5 opacity-80" />
+                              <span className="text-[10px] font-bold">Foto #{num}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {newLayout === "3x2" && (
+                        <div className="w-full h-full grid grid-cols-2 grid-rows-3 gap-1.5">
+                          {[1, 2, 3, 4, 5, 6].map((num) => (
+                            <div key={num} className="rounded-lg bg-gradient-to-tr from-pink-400 to-rose-600 flex flex-col items-center justify-center text-white shadow-inner opacity-90">
+                              <Camera className="w-4 h-4 opacity-80" />
+                              <span className="text-[8px] font-bold">#{num}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {newLayout === "2x2" && (
+                        <div className="w-full h-full grid grid-cols-2 grid-rows-2 gap-2">
+                          {[1, 2, 3, 4].map((num) => (
+                            <div key={num} className="rounded-xl bg-gradient-to-tr from-amber-400 to-orange-500 flex flex-col items-center justify-center text-white shadow-inner opacity-90">
+                              <Camera className="w-5 h-5 mb-0.5 opacity-80" />
+                              <span className="text-[10px] font-bold">Foto #{num}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {newLayout === "2x1" && (
+                        <div className="w-full h-full flex flex-col gap-3 justify-between">
+                          {[1, 2].map((num) => (
+                            <div key={num} className="flex-1 rounded-xl bg-gradient-to-tr from-emerald-400 to-teal-600 flex flex-col items-center justify-center text-white shadow-inner opacity-90">
+                              <Camera className="w-6 h-6 mb-1 opacity-80" />
+                              <span className="text-[11px] font-bold">Foto #{num}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {newLayout === "1x1" && (
+                        <div className="w-full h-full rounded-xl bg-gradient-to-tr from-purple-500 to-indigo-600 flex flex-col items-center justify-center text-white shadow-inner opacity-90">
+                          <Camera className="w-10 h-10 mb-2 opacity-80" />
+                          <span className="text-xs font-bold">Foto Tunggal 1x1</span>
+                        </div>
+                      )}
+                      {newLayout === "4x2" && (
+                        <div className="w-full h-full grid grid-cols-2 grid-rows-4 gap-1">
+                          {[1, 2, 3, 4, 5, 6, 7, 8].map((num) => (
+                            <div key={num} className="rounded bg-gradient-to-tr from-blue-400 to-cyan-500 flex flex-col items-center justify-center text-white shadow-inner opacity-90">
+                              <Camera className="w-3.5 h-3.5 opacity-80" />
+                              <span className="text-[8px] font-bold">#{num}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Frame Image Layer (Overlaid on top) */}
+                  {rawBase64Img ? (
+                    <div className="relative w-full h-full z-10 flex items-center justify-center">
                       <img
-                        src={base64Img}
-                        alt="Preview"
-                        className="max-h-24 mx-auto object-contain bg-[repeating-conic-gradient(#ccc_0_25%,#fff_0_50%)] bg-[length:8px_8px] rounded"
+                        ref={previewImgRef}
+                        src={enableChromaKey ? base64Img : rawBase64Img}
+                        alt="Frame Preview"
+                        className="w-full h-full object-contain pointer-events-none"
                       />
-                      <span className="text-[11px] text-blue-600 font-medium block">Ganti gambar</span>
+
+                      {/* Processing Indicator */}
+                      {isProcessingChroma && (
+                        <div className="absolute inset-0 bg-white/50 backdrop-blur-xs flex items-center justify-center">
+                          <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
+                        </div>
+                      )}
+
+                      {/* Pipette Active Overlay Hint */}
+                      {isEyedropperActive && (
+                        <div className="absolute top-2 left-2 right-2 bg-purple-900/90 text-white text-[10px] font-bold py-1 px-2.5 rounded-lg shadow-md text-center">
+                          🎯 Mode Pipet: Klik pada warna gambar yang ingin dihapus
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    <div className="py-3 space-y-1">
-                      <Plus className="w-6 h-6 text-slate-400 mx-auto" />
-                      <span className="text-xs font-semibold text-slate-700 block">Pilih file PNG transparan</span>
+                    <div className="p-6 text-center space-y-2 text-slate-400 z-10">
+                      <ImageIcon className="w-12 h-12 mx-auto opacity-40" />
+                      <p className="text-xs font-semibold text-slate-600">Belum ada gambar dipilih</p>
+                      <p className="text-[11px] text-slate-400 max-w-[200px] mx-auto">
+                        Pilih berkas frame di sebelah kiri untuk melihat hasil pratinjau langsung
+                      </p>
                     </div>
                   )}
                 </div>
-              </div>
 
-              {uploadError && (
-                <p className="text-xs text-red-600 font-medium bg-red-50 p-2 rounded-lg border border-red-200">
-                  {uploadError}
-                </p>
-              )}
+                {/* Preview Meta / Status */}
+                <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+                  <div className="flex items-center gap-1.5">
+                    {enableChromaKey ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md font-semibold border border-emerald-200">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Background ({chromaColor}) Dihapus</span>
+                      </span>
+                    ) : (
+                      <span className="text-slate-500 font-medium">Gambar Utuh (Tanpa Hapus Warna)</span>
+                    )}
+                  </div>
 
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowUploadModal(false)}
-                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-bold transition-colors cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting || !newName || !base64Img}
-                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-600/20 transition-all disabled:opacity-50 cursor-pointer"
-                >
-                  {isSubmitting ? "Menyimpan..." : "Simpan Bingkai"}
-                </button>
+                  <span className="text-slate-400 font-medium">
+                    {newLayout} • {HOLE_PRESETS[newLayout].find((p) => p.id === newPreset)?.label || newPreset}
+                  </span>
+                </div>
               </div>
-            </form>
+            </div>
+
+            {/* Modal Footer: Action Buttons */}
+            <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={handleCloseUploadModal}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-white text-xs font-bold transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                form="frame-upload-form"
+                disabled={isSubmitting || !newName || (!base64Img && !rawBase64Img)}
+                className="px-6 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-blue-600/20 transition-all disabled:opacity-50 cursor-pointer"
+              >
+                {isSubmitting ? "Menyimpan ke Cloud..." : "Simpan Bingkai"}
+              </button>
+            </div>
           </div>
         </div>
       )}
