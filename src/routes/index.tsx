@@ -302,7 +302,13 @@ function Photobooth() {
   }, [templates, reloadTemplates, settingsDB, templateDB]);
 
   // Handle adding custom template
-  const handleAddTemplate = useCallback(async (name: string, layout: LayoutId, presetId: string, base64Img: string) => {
+  const handleAddTemplate = useCallback(async (
+    name: string,
+    layout: LayoutId,
+    presetId: string,
+    base64Img: string,
+    photoBoxes?: { id: string; x: number; y: number; w: number; h: number }[]
+  ) => {
     try {
       const db = new TemplateDB();
       const newTemplate: CustomTemplate = {
@@ -313,6 +319,7 @@ function Photobooth() {
         img: base64Img,
         isCustom: true,
         enabled: true,
+        photoBoxes,
       };
       await db.saveTemplate(newTemplate);
       await reloadTemplates();
@@ -1287,6 +1294,25 @@ function ShootScreen({
   useEffect(() => {
     let active = true;
     async function loadAndDetect() {
+      if (activeTemplate?.photoBoxes && activeTemplate.photoBoxes.length > 0) {
+        const pctHoles = activeTemplate.photoBoxes.map((box) => ({
+          left: box.x,
+          top: box.y,
+          width: box.w,
+          height: box.h,
+        }));
+        setDetectedHoles(pctHoles);
+        if (overlaySrc) {
+          try {
+            const img = await loadImg(overlaySrc);
+            if (active) {
+              setOverlayDimensions({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height });
+            }
+          } catch (e) {}
+        }
+        return;
+      }
+
       if (!overlaySrc) return;
       try {
         const img = await loadImg(overlaySrc);
@@ -1317,7 +1343,7 @@ function ShootScreen({
     return () => {
       active = false;
     };
-  }, [overlaySrc]);
+  }, [overlaySrc, activeTemplate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1749,7 +1775,7 @@ function ReviewScreen({
 
       let stripResult: string;
       if (customImg) {
-        stripResult = await composeTemplateFrame(photos, variant, customImg, presetId, layout);
+        stripResult = await composeTemplateFrame(photos, variant, customImg, presetId, layout, activeTemplate?.photoBoxes);
       } else if (layout === "3x2") {
         stripResult = await compose3x2Frame(photos, variant, customImg, presetId);
       } else if (layout === "3x1" && variant !== "default") {
@@ -2003,6 +2029,25 @@ function ResultScreen({
   useEffect(() => {
     let active = true;
     async function loadAndDetect() {
+      if (activeTemplate?.photoBoxes && activeTemplate.photoBoxes.length > 0) {
+        const pctHoles = activeTemplate.photoBoxes.map((box) => ({
+          left: box.x,
+          top: box.y,
+          width: box.w,
+          height: box.h,
+        }));
+        setDetectedHoles(pctHoles);
+        if (overlaySrc) {
+          try {
+            const img = await loadImg(overlaySrc);
+            if (active) {
+              setOverlayDimensions({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height });
+            }
+          } catch (e) {}
+        }
+        return;
+      }
+
       if (!overlaySrc) return;
       try {
         const img = await loadImg(overlaySrc);
@@ -2026,7 +2071,7 @@ function ResultScreen({
     }
     loadAndDetect();
     return () => { active = false; };
-  }, [overlaySrc]);
+  }, [overlaySrc, activeTemplate]);
 
   const printInfo = PRINT_SIZES[layout];
 
@@ -2132,7 +2177,13 @@ function ResultScreen({
           let framedLiveVideoUrl = uploadedVideoUrls[0] || undefined;
           if (liveVideos && liveVideos.length > 0 && overlaySrc) {
             try {
-              const framedVideoData = await composeLiveVideoFrame(overlaySrc, liveVideos, layout);
+              const framedVideoData = await composeLiveVideoFrame(
+                overlaySrc,
+                liveVideos,
+                layout,
+                5200,
+                activeTemplate?.photoBoxes
+              );
               if (framedVideoData) {
                 try {
                   framedLiveVideoUrl = await uploadToStorage(framedVideoData, `photos/${sessionCode}_framed_live.mp4`, "video/mp4");
@@ -2645,7 +2696,14 @@ function detectHolesFromImage(frameImg: HTMLImageElement): { x: number; y: numbe
   return holes;
 }
 
-async function composeTemplateFrame(photos: string[], variant: string = "default", customImg?: string, presetId?: string, layout?: string): Promise<string> {
+async function composeTemplateFrame(
+  photos: string[],
+  variant: string = "default",
+  customImg?: string,
+  presetId?: string,
+  layout?: string,
+  photoBoxes?: { id?: string; x: number; y: number; w: number; h: number }[]
+): Promise<string> {
   const effectivePreset = presetId || variant;
 
   if (!customImg) throw new Error("Template image is missing!");
@@ -2665,7 +2723,17 @@ async function composeTemplateFrame(photos: string[], variant: string = "default
   ctx.fillStyle = "#FFFFFF";
   ctx.fillRect(0, 0, FRAME_W, FRAME_H);
 
-  let holes = detectHolesFromImage(frameImg);
+  let holes: { x: number; y: number; w: number; h: number }[] = [];
+  if (photoBoxes && photoBoxes.length > 0) {
+    holes = photoBoxes.map((box) => ({
+      x: (box.x / 100) * FRAME_W,
+      y: (box.y / 100) * FRAME_H,
+      w: (box.w / 100) * FRAME_W,
+      h: (box.h / 100) * FRAME_H,
+    }));
+  } else {
+    holes = detectHolesFromImage(frameImg);
+  }
 
   if (holes.length > 0) {
     // Draw each photo into its corresponding detected hole

@@ -47,6 +47,7 @@ export interface Template {
   isCustom: boolean;
   enabled: boolean;
   presetId: string;
+  photoBoxes?: PhotoBox[];
 }
 
 export interface PhotoBox {
@@ -111,7 +112,8 @@ interface AdminScreenProps {
     name: string,
     layout: "3x1" | "3x2" | "2x1" | "1x1" | "2x2" | "4x2",
     presetId: string,
-    base64Img: string
+    base64Img: string,
+    photoBoxes?: PhotoBox[]
   ) => Promise<void>;
   onDeleteTemplate: (id: string) => Promise<void>;
   onLaunchBooth: () => void;
@@ -204,6 +206,7 @@ export function AdminScreen({
   const [chromaTolerance, setChromaTolerance] = useState(25); // 5 - 70%
   const [chromaColor, setChromaColor] = useState("#FFFFFF");
   const [toolMode, setToolMode] = useState<"wand" | "global">("wand");
+  const [interactionMode, setInteractionMode] = useState<"erase" | "boxes">("erase");
   const [previewTab, setPreviewTab] = useState<"checkerboard" | "photos">("checkerboard");
   const [detectedHoles, setDetectedHoles] = useState<{ x: number; y: number; w: number; h: number }[]>([]);
   const [imageMeta, setImageMeta] = useState<{ width: number; height: number } | null>(null);
@@ -1120,25 +1123,13 @@ export function AdminScreen({
       return;
     }
 
-    // Auto-punch defined photo boxes if canvas doesn't have holes yet
-    if (workingCanvasRef.current && photoBoxes.length > 0) {
-      const currentHoles = detectHolesFromCanvas(workingCanvasRef.current);
-      if (currentHoles.length === 0) {
-        photoBoxes.forEach((box) => {
-          if (workingCanvasRef.current) {
-            punchBoxHole(workingCanvasRef.current, box);
-          }
-        });
-      }
-    }
-
     const finalImg = workingCanvasRef.current?.toDataURL("image/png") || activeCanvasData || rawBase64Img;
 
     setIsSubmitting(true);
     try {
-      await onAddTemplate(newName.trim(), newLayout, "auto", finalImg);
+      await onAddTemplate(newName.trim(), newLayout, "auto", finalImg, photoBoxes);
       handleCloseUploadModal();
-      alert("✅ Bingkai berhasil ditambahkan dengan lubang foto kustom!");
+      alert("✅ Bingkai berhasil ditambahkan!");
     } catch (err) {
       console.error(err);
       setUploadError("Gagal menyimpan template bingkai.");
@@ -2120,112 +2111,19 @@ export function AdminScreen({
                     </div>
                   </div>
 
-                  {/* ─────── PENGATURAN BLOK & KOTAK FOTO (JUMLAH, BENTUK, RASIO) ─────── */}
-                  <div className="p-4 rounded-xl border border-blue-100 bg-blue-50/40 space-y-3">
+                  {/* ─────── 1. ALAT PENGHAPUS BACKGROUND / WARNA BINGKAI (MANDIRI) ─────── */}
+                  <div className="p-4 rounded-xl border border-blue-100 bg-blue-50/30 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs">
-                          <Square className="w-4 h-4" />
+                          <Wand2 className="w-4 h-4" />
                         </div>
                         <div>
                           <span className="text-xs font-bold text-slate-900 block leading-tight">
-                            Pengaturan Kotak & Lubang Foto ({photoBoxes.length} Kotak)
+                            Alat Penghapus Background Bingkai
                           </span>
                           <span className="text-[10px] text-slate-500 font-medium">
-                            Geser, ubah ukuran, atau ganti rasio kotak foto di bawah
-                          </span>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={handleAddBox}
-                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Tambah Kotak</span>
-                      </button>
-                    </div>
-
-                    {/* Box Selector Pills */}
-                    {photoBoxes.length > 0 ? (
-                      <div className="space-y-2.5">
-                        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-                          {photoBoxes.map((box, idx) => {
-                            const isSelected = (selectedBoxId || photoBoxes[0]?.id) === box.id;
-                            return (
-                              <button
-                                key={box.id}
-                                type="button"
-                                onClick={() => setSelectedBoxId(box.id)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
-                                  isSelected
-                                    ? "bg-blue-600 text-white shadow-xs"
-                                    : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"
-                                }`}
-                              >
-                                <span>Kotak #{idx + 1}</span>
-                                <span className={`text-[10px] opacity-75`}>
-                                  ({Math.round(box.w)}% × {Math.round(box.h)}%)
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        {/* Selected Box Controls: Ratio Presets & Delete */}
-                        <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
-                              <span>Pilihan Rasio untuk Kotak #{photoBoxes.findIndex((b) => b.id === (selectedBoxId || photoBoxes[0]?.id)) + 1}:</span>
-                            </span>
-                            {photoBoxes.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteBox(selectedBoxId || photoBoxes[0]?.id)}
-                                className="text-red-600 hover:text-red-700 hover:bg-red-50 p-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                                title="Hapus kotak ini"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                <span>Hapus Kotak</span>
-                              </button>
-                            )}
-                          </div>
-
-                          <div className="grid grid-cols-5 gap-1.5">
-                            {(["1:1", "3:4", "4:3", "9:16", "2:3"] as const).map((ratio) => (
-                              <button
-                                key={ratio}
-                                type="button"
-                                onClick={() => setBoxRatio(ratio)}
-                                className="px-2 py-1.5 bg-slate-50 hover:bg-blue-50 hover:text-blue-700 border border-slate-200 hover:border-blue-300 rounded-lg text-[11px] font-bold text-slate-700 transition-all text-center cursor-pointer"
-                              >
-                                {ratio}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="p-3 bg-white/70 rounded-xl text-center text-xs text-slate-400">
-                        Belum ada kotak foto. Klik "Tambah Kotak" untuk memulai.
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ─────── ALAT KUNCI CHROMA & LUBANG FOTO TERKUNCI (HANYA PADA KOTAK) ─────── */}
-                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-xs">
-                          <Lock className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <span className="text-xs font-bold text-slate-900 block leading-tight">
-                            Kunci Chroma & Lubangi Kotak Foto
-                          </span>
-                          <span className="text-[10px] text-slate-500 font-medium">
-                            Warna hanya dihapus di dalam area kotak (desain frame luar 100% aman)
+                            Klik langsung pada gambar di samping untuk melubangi pigura (Magic Wand)
                           </span>
                         </div>
                       </div>
@@ -2255,110 +2153,56 @@ export function AdminScreen({
                       </div>
                     </div>
 
-                    {/* Chroma Key Color Chooser */}
-                    <div className="space-y-1.5 pt-1">
-                      <label className="block text-[11px] font-semibold text-slate-700">
-                        Warna yang Ingin Dihapus (Kunci Chroma):
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setChromaColor("#FFFFFF")}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-all cursor-pointer ${
-                            chromaColor.toUpperCase() === "#FFFFFF"
-                              ? "border-blue-500 bg-blue-50 text-blue-700 font-bold"
-                              : "border-slate-200 bg-white text-slate-700"
-                          }`}
-                        >
-                          <span className="w-3.5 h-3.5 rounded-full border border-slate-300 bg-white inline-block"></span>
-                          <span>Putih</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => setChromaColor("#00FF00")}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-all cursor-pointer ${
-                            chromaColor.toUpperCase() === "#00FF00"
-                              ? "border-emerald-500 bg-emerald-50 text-emerald-700 font-bold"
-                              : "border-slate-200 bg-white text-slate-700"
-                          }`}
-                        >
-                          <span className="w-3.5 h-3.5 rounded-full border border-emerald-400 bg-[#00FF00] inline-block"></span>
-                          <span>Hijau</span>
-                        </button>
-
-                        <div className="flex items-center gap-1.5 ml-auto">
-                          <input
-                            type="color"
-                            value={chromaColor}
-                            onChange={(e) => setChromaColor(e.target.value)}
-                            className="w-7 h-7 rounded border border-slate-200 cursor-pointer p-0.5"
-                            title="Pilih warna kustom"
-                          />
-                          <span className="text-[11px] font-mono text-slate-600">{chromaColor}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Action Buttons: Bounded Chroma Erase & Direct Punch */}
-                    <div className="grid grid-cols-2 gap-2 pt-1">
+                    {/* Quick Erase Action Buttons */}
+                    <div className="grid grid-cols-3 gap-2 pt-1">
                       <button
                         type="button"
-                        onClick={handleEraseChromaInSelectedBox}
-                        disabled={!activeCanvasData || photoBoxes.length === 0}
-                        className="p-2.5 bg-white hover:bg-blue-50/50 border border-slate-200 hover:border-blue-400 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs cursor-pointer disabled:opacity-50 text-center"
+                        onClick={() => {
+                          setToolMode("wand");
+                          setInteractionMode("erase");
+                          setPreviewTab("checkerboard");
+                        }}
+                        disabled={!activeCanvasData}
+                        className={`p-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs cursor-pointer border ${
+                          toolMode === "wand" && interactionMode === "erase"
+                            ? "bg-blue-600 text-white border-blue-700 shadow-blue-500/20"
+                            : "bg-white text-slate-800 border-slate-200 hover:bg-slate-50"
+                        }`}
                       >
-                        <Lock className="w-4 h-4 text-blue-600" />
-                        <span className="text-[11px] font-bold text-slate-800 leading-tight">
-                          Hapus Warna di Kotak #{photoBoxes.findIndex((b) => b.id === (selectedBoxId || photoBoxes[0]?.id)) + 1} Saja
+                        <Wand2 className={`w-4 h-4 ${toolMode === "wand" && interactionMode === "erase" ? "text-white" : "text-blue-600"}`} />
+                        <span className="text-[11px] font-bold leading-tight text-center">Magic Wand</span>
+                        <span className={`text-[9px] ${toolMode === "wand" && interactionMode === "erase" ? "text-blue-100" : "text-slate-400"}`}>
+                          Klik Gambar
                         </span>
-                        <span className="text-[9px] text-slate-400">Area Luar Kotak Utuh</span>
                       </button>
 
                       <button
                         type="button"
-                        onClick={handleEraseChromaInAllBoxes}
-                        disabled={!activeCanvasData || photoBoxes.length === 0}
-                        className="p-2.5 bg-white hover:bg-indigo-50/50 border border-slate-200 hover:border-indigo-400 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs cursor-pointer disabled:opacity-50 text-center"
+                        onClick={handleEraseWhite}
+                        disabled={!activeCanvasData}
+                        className="p-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs hover:border-blue-400 cursor-pointer disabled:opacity-50"
                       >
-                        <Lock className="w-4 h-4 text-indigo-600" />
-                        <span className="text-[11px] font-bold text-slate-800 leading-tight">
-                          Hapus Warna di Semua Kotak
-                        </span>
-                        <span className="text-[9px] text-slate-400">Di {photoBoxes.length} Kotak Foto</span>
+                        <div className="w-4 h-4 rounded-full border-2 border-slate-300 bg-white shadow-xs"></div>
+                        <span className="text-[11px] font-bold text-slate-800 leading-tight text-center">Hapus Putih</span>
+                        <span className="text-[9px] text-slate-400">1-Klik Semua</span>
                       </button>
 
                       <button
                         type="button"
-                        onClick={handlePunchSelectedBox}
-                        disabled={!activeCanvasData || photoBoxes.length === 0}
-                        className="p-2.5 bg-white hover:bg-emerald-50/50 border border-slate-200 hover:border-emerald-400 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs cursor-pointer disabled:opacity-50 text-center"
+                        onClick={handleEraseGreen}
+                        disabled={!activeCanvasData}
+                        className="p-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs hover:border-emerald-400 cursor-pointer disabled:opacity-50"
                       >
-                        <Scissors className="w-4 h-4 text-emerald-600" />
-                        <span className="text-[11px] font-bold text-slate-800 leading-tight">
-                          Lubangi Kotak #{photoBoxes.findIndex((b) => b.id === (selectedBoxId || photoBoxes[0]?.id)) + 1}
-                        </span>
-                        <span className="text-[9px] text-emerald-600 font-semibold">100% Bersih & Transparan</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handlePunchAllBoxes}
-                        disabled={!activeCanvasData || photoBoxes.length === 0}
-                        className="p-2.5 bg-white hover:bg-emerald-50/50 border border-slate-200 hover:border-emerald-400 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs cursor-pointer disabled:opacity-50 text-center"
-                      >
-                        <Scissors className="w-4 h-4 text-emerald-600" />
-                        <span className="text-[11px] font-bold text-slate-800 leading-tight">
-                          Lubangi Semua Kotak Sekaligus
-                        </span>
-                        <span className="text-[9px] text-emerald-600 font-semibold">Semua Kotak Transparan</span>
+                        <div className="w-4 h-4 rounded-full border border-emerald-400 bg-[#00FF00] shadow-xs"></div>
+                        <span className="text-[11px] font-bold text-slate-800 leading-tight text-center">Hapus Hijau</span>
+                        <span className="text-[9px] text-slate-400">Green Screen</span>
                       </button>
                     </div>
 
-                    {/* Mode & Tolerance Slider */}
+                    {/* Custom Chroma Color & Tolerance */}
                     <div className="pt-2 border-t border-slate-200/80 space-y-2">
                       <div className="flex items-center justify-between text-[11px]">
-                        <span className="font-semibold text-slate-700">Toleransi Kepekaan Warna Chroma:</span>
+                        <span className="font-semibold text-slate-700">Toleransi Kepekaan Warna:</span>
                         <span className="font-mono font-bold text-blue-600">{chromaTolerance}%</span>
                       </div>
                       <input
@@ -2370,6 +2214,29 @@ export function AdminScreen({
                         className="w-full accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
                       />
 
+                      <div className="flex items-center justify-between pt-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-slate-600 font-medium">Hapus Warna Tertentu:</span>
+                          <input
+                            type="color"
+                            value={chromaColor}
+                            onChange={(e) => setChromaColor(e.target.value)}
+                            className="w-6 h-6 rounded border border-slate-200 cursor-pointer p-0.5"
+                            title="Pilih warna kustom"
+                          />
+                          <span className="text-[10px] font-mono text-slate-500">{chromaColor}</span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleEraseChosenColor(chromaColor)}
+                          disabled={!activeCanvasData}
+                          className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
+                        >
+                          Hapus Warna Ini
+                        </button>
+                      </div>
+
                       {/* Action status message */}
                       {actionStatus && (
                         <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800 font-medium animate-in fade-in flex items-center gap-1.5">
@@ -2380,6 +2247,106 @@ export function AdminScreen({
                     </div>
                   </div>
 
+                  {/* ─────── 2. PENANDA POSISI FOTO PENGUNJUNG (SLOT FOTO) ─────── */}
+                  <div className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/30 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+                          <Square className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 block leading-tight">
+                            Penanda Posisi Foto ({photoBoxes.length} Kotak)
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            Menandai letak & rasio foto pengunjung saat sesi foto booth
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleAddBox}
+                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Tambah Kotak</span>
+                      </button>
+                    </div>
+
+                    <p className="text-[11px] text-indigo-900/80 bg-white/80 p-2 rounded-lg border border-indigo-100 leading-relaxed">
+                      💡 <strong>Catatan:</strong> Kotak ini hanya sebagai penanda (slot) posisi foto pengunjung di booth. Kotak ini <u>tidak memotong</u> atau merusak hiasan bingkai Anda.
+                    </p>
+
+                    {/* Box Selector Pills */}
+                    {photoBoxes.length > 0 ? (
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                          {photoBoxes.map((box, idx) => {
+                            const isSelected = (selectedBoxId || photoBoxes[0]?.id) === box.id;
+                            return (
+                              <button
+                                key={box.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedBoxId(box.id);
+                                  setInteractionMode("boxes");
+                                }}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                                  isSelected
+                                    ? "bg-indigo-600 text-white shadow-xs"
+                                    : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"
+                                }`}
+                              >
+                                <span>Kotak #{idx + 1}</span>
+                                <span className="text-[10px] opacity-75">
+                                  ({Math.round(box.w)}% × {Math.round(box.h)}%)
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Selected Box Controls: Ratio Presets & Delete */}
+                        <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-800">
+                              Atur Rasio untuk Kotak #{photoBoxes.findIndex((b) => b.id === (selectedBoxId || photoBoxes[0]?.id)) + 1}:
+                            </span>
+                            {photoBoxes.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteBox(selectedBoxId || photoBoxes[0]?.id)}
+                                className="text-red-600 hover:text-red-700 hover:bg-red-50 p-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                                title="Hapus kotak penanda ini"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Hapus Kotak</span>
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-5 gap-1.5">
+                            {(["1:1", "3:4", "4:3", "9:16", "2:3"] as const).map((ratio) => (
+                              <button
+                                key={ratio}
+                                type="button"
+                                onClick={() => setBoxRatio(ratio)}
+                                className="px-2 py-1.5 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 border border-slate-200 hover:border-indigo-300 rounded-lg text-[11px] font-bold text-slate-700 transition-all text-center cursor-pointer"
+                              >
+                                {ratio}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-white/70 rounded-xl text-center text-xs text-slate-400">
+                        Belum ada kotak foto. Klik "Tambah Kotak" untuk memulai.
+                      </div>
+                    )}
+                  </div>
+
                   {uploadError && (
                     <p className="text-xs text-red-600 font-medium bg-red-50 p-2.5 rounded-xl border border-red-200">
                       {uploadError}
@@ -2388,56 +2355,69 @@ export function AdminScreen({
                 </form>
               </div>
 
-              {/* ─────── RIGHT COLUMN: Interactive Live Preview & Photo Box Editor ─────── */}
+              {/* ─────── RIGHT COLUMN: Interactive Live Preview & Mode Switcher ─────── */}
               <div className="lg:col-span-6 p-6 bg-slate-50/50 flex flex-col justify-between space-y-4">
-                {/* Preview Controls Header */}
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                      <Eye className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Pratinjau & Editor Blok Foto</span>
-                    </h4>
-                    <span className="text-[10px] text-slate-400">
-                      {activeCanvasData
-                        ? `✨ ${photoBoxes.length} Blok Kotak Foto Terpasang (Bisa Digeser & Ditarik Ukurannya)`
-                        : "Unggah bingkai di sebelah kiri untuk mulai mengedit"}
-                    </span>
+                {/* Mode Switcher Tabs Header */}
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center bg-white border border-slate-200 rounded-xl p-1 shadow-2xs gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInteractionMode("erase");
+                        setPreviewTab("checkerboard");
+                      }}
+                      className={`px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                        interactionMode === "erase" && previewTab === "checkerboard"
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                      }`}
+                    >
+                      <Wand2 className="w-3.5 h-3.5" />
+                      <span>1. Hapus Background (Magic Wand)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInteractionMode("boxes");
+                        setPreviewTab("checkerboard");
+                      }}
+                      className={`px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                        interactionMode === "boxes" && previewTab === "checkerboard"
+                          ? "bg-indigo-600 text-white shadow-xs"
+                          : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                      }`}
+                    >
+                      <Square className="w-3.5 h-3.5" />
+                      <span>2. Atur Posisi Foto ({photoBoxes.length})</span>
+                    </button>
                   </div>
 
                   {/* Mode switcher: Checkerboard vs Realistic Photos */}
-                  <div className="flex items-center bg-white border border-slate-200 rounded-lg p-0.5 text-[11px] shadow-2xs">
-                    <button
-                      type="button"
-                      onClick={() => setPreviewTab("checkerboard")}
-                      className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${
-                        previewTab === "checkerboard"
-                          ? "bg-blue-600 text-white shadow-xs"
-                          : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    >
-                      Transparansi
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPreviewTab("photos")}
-                      className={`px-2.5 py-1 rounded-md font-bold transition-all cursor-pointer ${
-                        previewTab === "photos"
-                          ? "bg-blue-600 text-white shadow-xs"
-                          : "text-slate-600 hover:text-slate-900"
-                      }`}
-                    >
-                      Simulasi Foto
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewTab(previewTab === "photos" ? "checkerboard" : "photos")}
+                    className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      previewTab === "photos"
+                        ? "bg-purple-600 text-white border-purple-700 shadow-xs"
+                        : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>Simulasi Foto</span>
+                  </button>
                 </div>
 
-                {/* Live Preview & Interactive Box Editor Canvas */}
+                {/* Live Preview Canvas Container */}
                 <div
                   ref={previewContainerRef}
+                  onClick={interactionMode === "erase" ? handlePreviewImageClick : undefined}
                   style={{
                     aspectRatio: imageMeta ? `${imageMeta.width} / ${imageMeta.height}` : "2 / 3",
                   }}
                   className={`relative w-full max-h-[440px] mx-auto rounded-2xl overflow-hidden border border-slate-200 shadow-sm flex items-center justify-center select-none ${
+                    interactionMode === "erase" && activeCanvasData ? "cursor-crosshair" : "cursor-default"
+                  } ${
                     previewTab === "checkerboard"
                       ? "bg-[repeating-conic-gradient(#cbd5e1_0_25%,#fff_0_50%)] bg-[length:14px_14px]"
                       : "bg-slate-900"
@@ -2498,19 +2478,21 @@ export function AdminScreen({
                     </div>
                   )}
 
-                  {/* Interactive Draggable & Resizable Photo Boxes Overlay */}
+                  {/* Photo Boxes Guides & Interactive Overlay */}
                   {activeCanvasData && (
-                    <div className="absolute inset-0 z-20 pointer-events-auto">
+                    <div className={`absolute inset-0 z-20 ${interactionMode === "boxes" ? "pointer-events-auto" : "pointer-events-none"}`}>
                       {photoBoxes.map((box, idx) => {
                         const isSelected = (selectedBoxId || photoBoxes[0]?.id) === box.id;
                         return (
                           <div
                             key={box.id}
                             onClick={(e) => {
+                              if (interactionMode !== "boxes") return;
                               e.stopPropagation();
                               setSelectedBoxId(box.id);
                             }}
                             onPointerDown={(e) => {
+                              if (interactionMode !== "boxes") return;
                               e.stopPropagation();
                               setSelectedBoxId(box.id);
                               setDragState({
@@ -2527,18 +2509,20 @@ export function AdminScreen({
                               width: `${box.w}%`,
                               height: `${box.h}%`,
                             }}
-                            className={`absolute cursor-move border-2 transition-colors select-none rounded-lg flex flex-col items-center justify-between p-1.5 ${
-                              isSelected
-                                ? "border-blue-500 bg-blue-500/20 ring-2 ring-blue-400/60 shadow-lg z-30"
-                                : "border-indigo-400/80 bg-indigo-500/10 hover:border-blue-400 z-20"
+                            className={`absolute select-none rounded-lg flex flex-col items-center justify-between p-1.5 transition-all ${
+                              interactionMode === "boxes"
+                                ? isSelected
+                                  ? "cursor-move border-2 border-indigo-500 bg-indigo-500/20 ring-2 ring-indigo-400/60 shadow-lg z-30"
+                                  : "cursor-move border-2 border-indigo-400/80 bg-indigo-500/10 hover:border-indigo-400 z-20"
+                                : "border-2 border-dashed border-indigo-400/40 bg-indigo-500/5 z-10"
                             }`}
                           >
                             {/* Header Badge */}
                             <div className="w-full flex items-center justify-between pointer-events-none">
-                              <span className="px-1.5 py-0.5 rounded bg-blue-600 text-white font-bold text-[9px] shadow-xs">
+                              <span className="px-1.5 py-0.5 rounded bg-indigo-600 text-white font-bold text-[9px] shadow-xs">
                                 #{idx + 1}
                               </span>
-                              {isSelected && (
+                              {isSelected && interactionMode === "boxes" && (
                                 <span className="text-[8px] bg-slate-900/80 text-white px-1 py-0.5 rounded font-mono">
                                   {Math.round(box.w)}% × {Math.round(box.h)}%
                                 </span>
@@ -2547,18 +2531,17 @@ export function AdminScreen({
 
                             {/* Center label */}
                             <div className="pointer-events-none text-center">
-                              <Camera className={`w-3.5 h-3.5 mx-auto ${isSelected ? "text-blue-700" : "text-slate-600"}`} />
-                              <span className={`text-[9px] font-bold ${isSelected ? "text-blue-800" : "text-slate-700"}`}>
+                              <Camera className={`w-3.5 h-3.5 mx-auto ${isSelected && interactionMode === "boxes" ? "text-indigo-700" : "text-slate-500"}`} />
+                              <span className={`text-[9px] font-bold ${isSelected && interactionMode === "boxes" ? "text-indigo-800" : "text-slate-600"}`}>
                                 Foto #{idx + 1}
                               </span>
                             </div>
 
                             <div className="w-full h-1" />
 
-                            {/* Resize Handles when selected */}
-                            {isSelected && (
+                            {/* Resize Handles when selected in boxes mode */}
+                            {isSelected && interactionMode === "boxes" && (
                               <>
-                                {/* Corners */}
                                 <div
                                   onPointerDown={(e) => {
                                     e.stopPropagation();
@@ -2571,7 +2554,7 @@ export function AdminScreen({
                                       initBox: { ...box },
                                     });
                                   }}
-                                  className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-blue-600 rounded-full cursor-nwse-resize z-40 shadow-xs"
+                                  className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-full cursor-nwse-resize z-40 shadow-xs"
                                   title="Tarik sudut untuk ubah ukuran"
                                 />
                                 <div
@@ -2586,7 +2569,7 @@ export function AdminScreen({
                                       initBox: { ...box },
                                     });
                                   }}
-                                  className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-blue-600 rounded-full cursor-nesw-resize z-40 shadow-xs"
+                                  className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-full cursor-nesw-resize z-40 shadow-xs"
                                   title="Tarik sudut untuk ubah ukuran"
                                 />
                                 <div
@@ -2601,7 +2584,7 @@ export function AdminScreen({
                                       initBox: { ...box },
                                     });
                                   }}
-                                  className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-blue-600 rounded-full cursor-nesw-resize z-40 shadow-xs"
+                                  className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-full cursor-nesw-resize z-40 shadow-xs"
                                   title="Tarik sudut untuk ubah ukuran"
                                 />
                                 <div
@@ -2616,7 +2599,7 @@ export function AdminScreen({
                                       initBox: { ...box },
                                     });
                                   }}
-                                  className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-blue-600 rounded-full cursor-nwse-resize z-40 shadow-xs"
+                                  className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-indigo-600 rounded-full cursor-nwse-resize z-40 shadow-xs"
                                   title="Tarik sudut untuk ubah ukuran"
                                 />
                               </>
@@ -2626,14 +2609,29 @@ export function AdminScreen({
                       })}
                     </div>
                   )}
+
+                  {/* Mode Banner / Instruction Tooltip */}
+                  {activeCanvasData && (
+                    <div className="absolute bottom-2 left-2 right-2 z-30 pointer-events-none">
+                      {interactionMode === "erase" ? (
+                        <div className="bg-slate-900/85 backdrop-blur-xs text-white text-[11px] font-medium py-1.5 px-3 rounded-xl shadow-lg text-center">
+                          🪄 <strong>Mode Magic Wand:</strong> Klik pada area gambar (misal bagian putih di dalam pigura) untuk melubanginya menjadi transparan.
+                        </div>
+                      ) : (
+                        <div className="bg-indigo-900/85 backdrop-blur-xs text-white text-[11px] font-medium py-1.5 px-3 rounded-xl shadow-lg text-center">
+                          📐 <strong>Mode Penanda Foto:</strong> Geser kotak atau tarik sudutnya untuk menandai letak & ukuran foto pengunjung.
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Helper / Status Footer */}
                 <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="inline-flex items-center gap-1 text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-md font-semibold border border-blue-200">
+                    <span className="inline-flex items-center gap-1 text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-md font-semibold border border-indigo-200">
                       <Move className="w-3.5 h-3.5" />
-                      <span>{photoBoxes.length} Blok Kotak Foto Terpasang</span>
+                      <span>{photoBoxes.length} Slot Foto Terpasang</span>
                     </span>
                   </div>
 
@@ -2649,11 +2647,11 @@ export function AdminScreen({
               <div className="text-xs text-slate-500">
                 {photoBoxes.length > 0 ? (
                   <span className="text-emerald-700 font-semibold">
-                    ✅ Siap! Foto pengunjung akan masuk pas ke dalam {photoBoxes.length} kotak yang sudah diatur.
+                    ✅ Siap! Foto pengunjung akan masuk pas ke dalam {photoBoxes.length} posisi yang sudah ditandai.
                   </span>
                 ) : (
                   <span className="text-slate-500">
-                    💡 Tip: Atur posisi dan bentuk kotak foto agar hasil foto terlihat sempurna di dalam bingkai.
+                    💡 Tip: Lubangi pigura foto dengan Magic Wand lalu atur penanda foto.
                   </span>
                 )}
               </div>

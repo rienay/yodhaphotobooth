@@ -254,7 +254,8 @@ export async function composeLiveVideoFrame(
   templateImgSrc: string,
   videoUrls: string[],
   layout: string,
-  durationMs = 5200
+  durationMs = 5200,
+  customBoxes?: { id?: string; x: number; y: number; w: number; h: number }[]
 ): Promise<string> {
   if (!videoUrls || videoUrls.length === 0 || !templateImgSrc) {
     throw new Error("Missing video URLs or template for live video frame");
@@ -267,10 +268,20 @@ export async function composeLiveVideoFrame(
   const frameW = Math.round(origW / 2) * 2;
   const frameH = Math.round(origH / 2) * 2;
 
-  let holes = detectHolesFromImage(frameImg);
-  if (holes.length === 0) {
-    // Fallback: full center hole
-    holes = [{ x: Math.round(frameW * 0.1), y: Math.round(frameH * 0.1), w: Math.round(frameW * 0.8), h: Math.round(frameH * 0.8) }];
+  let holes: FrameHole[] = [];
+  if (customBoxes && customBoxes.length > 0) {
+    holes = customBoxes.map((box) => ({
+      x: Math.round((box.x / 100) * frameW),
+      y: Math.round((box.y / 100) * frameH),
+      w: Math.round((box.w / 100) * frameW),
+      h: Math.round((box.h / 100) * frameH),
+    }));
+  } else {
+    holes = detectHolesFromImage(frameImg);
+    if (holes.length === 0) {
+      // Fallback: full center hole
+      holes = [{ x: Math.round(frameW * 0.1), y: Math.round(frameH * 0.1), w: Math.round(frameW * 0.8), h: Math.round(frameH * 0.8) }];
+    }
   }
 
   // Create HTMLVideoElement for each video clip
@@ -416,7 +427,8 @@ export async function composeLiveGifFrame(
   layout: string,
   maxDimension = 420,
   fps = 8,
-  repeats = 2
+  repeats = 2,
+  customBoxes?: { id?: string; x: number; y: number; w: number; h: number }[]
 ): Promise<string> {
   if (!videoUrls || videoUrls.length === 0 || !templateImgSrc) {
     throw new Error("Missing video URLs or template for live GIF frame");
@@ -426,16 +438,26 @@ export async function composeLiveGifFrame(
   const origW = frameImg.naturalWidth || frameImg.width || 1200;
   const origH = frameImg.naturalHeight || frameImg.height || 1800;
 
-  let holes = detectHolesFromImage(frameImg);
-  if (holes.length === 0) {
-    holes = [
-      {
-        x: Math.round(origW * 0.1),
-        y: Math.round(origH * 0.1),
-        w: Math.round(origW * 0.8),
-        h: Math.round(origH * 0.8),
-      },
-    ];
+  let holes: FrameHole[] = [];
+  if (customBoxes && customBoxes.length > 0) {
+    holes = customBoxes.map((box) => ({
+      x: Math.round((box.x / 100) * origW),
+      y: Math.round((box.y / 100) * origH),
+      w: Math.round((box.w / 100) * origW),
+      h: Math.round((box.h / 100) * origH),
+    }));
+  } else {
+    holes = detectHolesFromImage(frameImg);
+    if (holes.length === 0) {
+      holes = [
+        {
+          x: Math.round(origW * 0.1),
+          y: Math.round(origH * 0.1),
+          w: Math.round(origW * 0.8),
+          h: Math.round(origH * 0.8),
+        },
+      ];
+    }
   }
 
   // Calculate target dimensions

@@ -8,6 +8,7 @@ export interface CustomTemplate {
   isCustom: true;
   enabled: boolean;
   presetId: string;
+  photoBoxes?: { id: string; x: number; y: number; w: number; h: number }[];
 }
 
 export interface PhotoboothSession {
