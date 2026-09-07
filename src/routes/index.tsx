@@ -2,8 +2,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { AdminScreen, Template } from "@/components/AdminScreen";
+import { AdminLogin } from "@/components/AdminLogin";
 import { TemplateDB, CustomTemplate, SessionDB, SettingsDB } from "@/lib/db";
 import { isSupabaseConfigured, uploadToStorage } from "@/lib/supabase";
+import {
+  isAdminAuthenticated,
+  isBoothAccessAllowed,
+  createBoothSession,
+  verifyAndLoginAdmin,
+} from "@/lib/auth";
 import yodhaLogo from "@/assets/yodha.png";
 import arthanaLogo from "@/assets/arthana.png";
 import gachaAsset from "@/assets/GACHA MACHINE.png";
@@ -167,6 +174,16 @@ function getDefaultTemplates(disabledIds: string[]): Template[] {
 
 /* ───────────────────────── Main Component ───────────────────────── */
 function Photobooth() {
+  const [isAdminAuth, setIsAdminAuth] = useState<boolean>(() => isAdminAuthenticated());
+  const [isBoothMode, setIsBoothMode] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location.search);
+    return params.get("mode") === "booth";
+  });
+  const [showExitModal, setShowExitModal] = useState(false);
+  const [exitPin, setExitPin] = useState("");
+  const [exitError, setExitError] = useState("");
+
   const [screen, setScreen] = useState<Screen>("home");
   const [layout, setLayout] = useState<LayoutId>("4x2");
   const [variant, setVariant] = useState<string>("raicab16");
@@ -268,17 +285,76 @@ function Photobooth() {
     }
   };
 
+  const handleExitBooth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const valid = await verifyAndLoginAdmin(exitPin);
+    if (valid) {
+      setShowExitModal(false);
+      setExitPin("");
+      setExitError("");
+      setIsBoothMode(false);
+      setIsAdminAuth(true);
+      if (typeof window !== "undefined") {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    } else {
+      setExitError("PIN Admin salah!");
+    }
+  };
+
+  // ──────────────────────── MODE 1: ADMIN AREA ────────────────────────
+  if (!isBoothMode) {
+    if (!isAdminAuth) {
+      return <AdminLogin onLoginSuccess={() => setIsAdminAuth(true)} />;
+    }
+
+    return (
+      <AdminScreen
+        templates={templates}
+        onToggleTemplate={handleToggleTemplate}
+        onAddTemplate={handleAddTemplate}
+        onDeleteTemplate={handleDeleteTemplate}
+        onLaunchBooth={() => {
+          createBoothSession();
+          setIsBoothMode(true);
+        }}
+        onLogout={() => setIsAdminAuth(false)}
+      />
+    );
+  }
+
+  // ─────────────────────── MODE 2: BOOTH KIOSK ────────────────────────
+  // Security check: random outsiders cannot access booth without admin authorization
+  if (!isBoothAccessAllowed()) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans text-center">
+        <div className="max-w-md bg-white p-8 rounded-2xl shadow-xl border border-slate-200 space-y-4">
+          <div className="w-14 h-14 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto text-2xl">
+            🔒
+          </div>
+          <h2 className="text-xl font-bold text-slate-900">Akses Kiosk Terbatas</h2>
+          <p className="text-sm text-slate-500">
+            Halaman Web Photobooth hanya dapat dibuka melalui Dashboard Admin. Silakan masuk sebagai Admin terlebih dahulu.
+          </p>
+          <button
+            onClick={() => {
+              setIsBoothMode(false);
+              if (typeof window !== "undefined") {
+                window.location.href = window.location.origin + window.location.pathname;
+              }
+            }}
+            className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm rounded-lg shadow cursor-pointer"
+          >
+            Menuju Login Admin
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <main className="min-h-screen flex flex-col items-center px-4 sm:px-8 py-6 sm:py-10">
       <Header
-        onLogoClick={() => {
-          if (screen === "admin") {
-            setScreen("home");
-          } else if (screen !== "shoot") {
-            setScreen("admin");
-          }
-        }}
-        isAdmin={screen === "admin"}
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}
         showFullscreenBtn={screen !== "shoot"}
@@ -335,17 +411,55 @@ function Photobooth() {
             templates={templates}
           />
         )}
-        {screen === "admin" && (
-          <AdminScreen
-            templates={templates}
-            onToggleTemplate={handleToggleTemplate}
-            onAddTemplate={handleAddTemplate}
-            onDeleteTemplate={handleDeleteTemplate}
-            onBack={() => setScreen("home")}
-          />
-        )}
       </div>
-      <Footer />
+      <Footer onExitBooth={() => setShowExitModal(true)} />
+
+      {/* Operator Exit Modal */}
+      {showExitModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-2xl font-sans text-slate-800">
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <span>🔒</span> Konfirmasi Admin
+            </h3>
+            <p className="text-xs text-slate-500">
+              Masukkan PIN Admin untuk keluar dari mode Web Photobooth dan kembali ke Dashboard.
+            </p>
+            <form onSubmit={handleExitBooth} className="space-y-3">
+              <input
+                type="password"
+                value={exitPin}
+                onChange={(e) => {
+                  setExitPin(e.target.value);
+                  setExitError("");
+                }}
+                placeholder="PIN Admin"
+                autoFocus
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-center tracking-widest font-mono text-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {exitError && <p className="text-xs text-red-600 font-medium">{exitError}</p>}
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExitModal(false);
+                    setExitPin("");
+                    setExitError("");
+                  }}
+                  className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs rounded-lg cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs rounded-lg shadow cursor-pointer"
+                >
+                  Keluar ke Admin
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -353,14 +467,10 @@ function Photobooth() {
 /* ───────────────────────── Header / Footer ───────────────────────── */
 
 function Header({
-  onLogoClick,
-  isAdmin,
   isFullscreen,
   onToggleFullscreen,
   showFullscreenBtn,
 }: {
-  onLogoClick?: () => void;
-  isAdmin?: boolean;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
   showFullscreenBtn?: boolean;
@@ -368,27 +478,12 @@ function Header({
   return (
     <header className="w-full max-w-5xl flex items-center justify-between gap-4 mb-2">
       <div className="flex items-center gap-3">
-        <button
-          onClick={onLogoClick}
-          className="focus:outline-none cursor-pointer hover:scale-105 active:scale-95 transition-transform relative group"
-          title="Menu Admin"
-        >
+        <div className="flex items-center">
           <img src={yodhaLogo} alt="Yodha Logo" className="h-20 w-auto object-contain max-w-[150px]" />
-          {!isAdmin && (
-            <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
-            </span>
-          )}
-        </button>
+        </div>
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-sm sm:text-base">Yodha-Photobooth</h1>
-            {isAdmin && (
-              <span className="pixel text-[8px] bg-[var(--color-blush)] text-[var(--color-ink)] border border-[var(--color-ink)] px-1 py-0.5 rounded uppercase">
-                Admin
-              </span>
-            )}
           </div>
           <p className="text-xs text-muted-foreground mt-1" style={{ fontFamily: "var(--font-body)", fontSize: "1.1rem" }}>
             ♡ jepret, simpan, kenang ♡
@@ -413,10 +508,19 @@ function Header({
   );
 }
 
-function Footer() {
+function Footer({ onExitBooth }: { onExitBooth?: () => void }) {
   return (
-    <footer className="mt-6 text-xs pixel text-muted-foreground">
-      © Yodha-Photobooth
+    <footer className="mt-6 text-xs pixel text-muted-foreground flex items-center justify-between w-full max-w-4xl px-2">
+      <span>© Yodha-Photobooth</span>
+      {onExitBooth && (
+        <button
+          onClick={onExitBooth}
+          className="text-[10px] text-slate-400 hover:text-slate-600 cursor-pointer flex items-center gap-1 opacity-40 hover:opacity-100 transition-opacity"
+          title="Area Operator"
+        >
+          <span>🔒 Operator</span>
+        </button>
+      )}
     </footer>
   );
 }
