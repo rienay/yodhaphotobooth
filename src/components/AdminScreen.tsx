@@ -871,6 +871,106 @@ export function AdminScreen({
     reader.readAsDataURL(file);
   };
 
+  // ── Auto-Scan & Erase Background (Deteksi & Hapus Otomatis) ───────────
+  const handleAutoScanErase = () => {
+    if (!workingCanvasRef.current || !activeCanvasData) return;
+    const canvas = workingCanvasRef.current;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return;
+
+    // Save history for Undo
+    setHistoryStack((prev) => [...prev.slice(-14), activeCanvasData]);
+    setRedoStack([]);
+
+    const width = canvas.width;
+    const height = canvas.height;
+    let erasedCount = 0;
+
+    const isTargetColor = (r: number, g: number, b: number, a: number) => {
+      if (a < 100) return false;
+      // White / off-white
+      if (r > 220 && g > 220 && b > 220) return true;
+      // Green screen
+      if (g > 180 && r < 120 && b < 120) return true;
+      // Close to chromaColor
+      const { r: tr, g: tg, b: tb } = hexToRgb(chromaColor);
+      const dist = Math.sqrt((r - tr) ** 2 + (g - tg) ** 2 + (b - tb) ** 2);
+      if (dist <= (chromaTolerance / 100) * 441.67) return true;
+      return false;
+    };
+
+    // Phase 1: Check centers and interior points of all existing photoBoxes
+    if (photoBoxes.length > 0) {
+      photoBoxes.forEach((box) => {
+        const offsets = [
+          [0.5, 0.5],
+          [0.35, 0.35],
+          [0.65, 0.65],
+          [0.5, 0.3],
+          [0.5, 0.7],
+        ];
+
+        for (const [ox, oy] of offsets) {
+          const sx = Math.floor(((box.x + box.w * ox) / 100) * width);
+          const sy = Math.floor(((box.y + box.h * oy) / 100) * height);
+          if (sx < 0 || sx >= width || sy < 0 || sy >= height) continue;
+
+          const p = ctx.getImageData(sx, sy, 1, 1).data;
+          if (isTargetColor(p[0], p[1], p[2], p[3])) {
+            floodFillErase(canvas, sx, sy, chromaTolerance);
+            erasedCount++;
+            break;
+          }
+        }
+      });
+    }
+
+    // Phase 2: If few boxes were erased, scan grid candidate points across inner canvas
+    if (erasedCount < (photoBoxes.length || 2)) {
+      const xSteps = 10;
+      const ySteps = 14;
+      for (let yi = 1; yi < ySteps; yi++) {
+        for (let xi = 1; xi < xSteps; xi++) {
+          const gx = Math.floor((xi / xSteps) * width);
+          const gy = Math.floor((yi / ySteps) * height);
+
+          // Avoid outer 6% canvas border to keep frame edges safe
+          if (gx < width * 0.06 || gx > width * 0.94 || gy < height * 0.06 || gy > height * 0.94) continue;
+
+          const p = ctx.getImageData(gx, gy, 1, 1).data;
+          if (isTargetColor(p[0], p[1], p[2], p[3])) {
+            // Verify it's a solid block of at least 8px
+            const pR = ctx.getImageData(Math.min(width - 1, gx + 6), gy, 1, 1).data;
+            const pD = ctx.getImageData(gx, Math.min(height - 1, gy + 6), 1, 1).data;
+            if (isTargetColor(pR[0], pR[1], pR[2], pR[3]) && isTargetColor(pD[0], pD[1], pD[2], pD[3])) {
+              floodFillErase(canvas, gx, gy, chromaTolerance);
+              erasedCount++;
+            }
+          }
+        }
+      }
+    }
+
+    const finalData = canvas.toDataURL("image/png");
+    setActiveCanvasData(finalData);
+    const holes = detectHolesFromCanvas(canvas);
+    applyHolesToLayout(holes);
+
+    if (holes.length > 0) {
+      const newBoxes: PhotoBox[] = holes.map((h, i) => ({
+        id: `box_${i + 1}`,
+        x: Math.round((h.x / width) * 1000) / 10,
+        y: Math.round((h.y / height) * 1000) / 10,
+        w: Math.round((h.w / width) * 1000) / 10,
+        h: Math.round((h.h / height) * 1000) / 10,
+      }));
+      setPhotoBoxes(newBoxes);
+      setSelectedBoxId(newBoxes[0]?.id || null);
+    }
+
+    setActionStatus(`✨ Scan otomatis selesai! Berhasil melubangi ${holes.length > 0 ? holes.length : erasedCount} area bingkai foto.`);
+  };
+
   // 1-Click: Erase White Photo Boxes
   const handleEraseWhite = () => {
     if (!workingCanvasRef.current || !activeCanvasData) return;
@@ -2299,6 +2399,18 @@ export function AdminScreen({
                         </button>
                       </div>
                     </div>
+
+                    {/* Primary Auto-Scan Button */}
+                    <button
+                      type="button"
+                      onClick={handleAutoScanErase}
+                      disabled={!activeCanvasData}
+                      className="w-full py-2.5 px-3 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-sm shadow-indigo-500/25 transition-all cursor-pointer disabled:opacity-50 active:scale-[0.99]"
+                      title="Pindai dan hapus background foto di dalam bingkai secara otomatis"
+                    >
+                      <Sparkles className="w-4 h-4 text-amber-300 animate-pulse shrink-0" />
+                      <span>✨ Scan Otomatis & Hapus Background Foto</span>
+                    </button>
 
                     {/* Quick Erase & Restore Tool Buttons */}
                     <div className="grid grid-cols-4 gap-2 pt-1">

@@ -1812,12 +1812,33 @@ function ReviewScreen({
         </p>
       </div>
 
-      {/* Grid of photos */}
-      <div className="w-full max-w-2xl grid grid-cols-2 sm:grid-cols-2 gap-4">
+      {/* Grid of photos - Dynamically centered based on count */}
+      <div
+        className={`w-full flex flex-wrap justify-center items-center gap-4 ${
+          photos.length === 1
+            ? "max-w-md mx-auto"
+            : photos.length === 2
+            ? "max-w-2xl mx-auto"
+            : photos.length === 3
+            ? "max-w-3xl mx-auto"
+            : "max-w-2xl mx-auto"
+        }`}
+      >
         {photos.map((photo, i) => (
           <div
             key={i}
             onClick={() => setRetakeIdx(i)}
+            style={{
+              width:
+                photos.length === 1
+                  ? "100%"
+                  : photos.length === 2
+                  ? "calc(50% - 0.5rem)"
+                  : photos.length === 3
+                  ? "calc(33.333% - 0.75rem)"
+                  : "calc(50% - 0.5rem)",
+              minWidth: photos.length === 1 ? "auto" : "240px",
+            }}
             className="group relative aspect-[4/3] rounded-2xl overflow-hidden border-4 border-[#3A2A40] bg-slate-900 shadow-[6px_6px_0_0_rgba(58,42,64,0.2)] cursor-pointer hover:scale-[1.02] transition-transform"
           >
             <img src={photo} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" />
@@ -1836,12 +1857,12 @@ function ReviewScreen({
         ))}
       </div>
 
-      {/* Action Buttons */}
-      <div className="flex items-center justify-between w-full max-w-2xl pt-2">
+      {/* Action Buttons - Centered directly and symmetrically under photos */}
+      <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 w-full pt-4">
         <button
           onClick={onBack}
-          className="pixel-btn-powder flex items-center gap-2"
-          style={{ fontSize: "0.8rem", padding: "0.6rem 1.2rem" }}
+          className="pixel-btn-powder flex items-center gap-2 cursor-pointer hover:scale-105 active:scale-95 transition-transform"
+          style={{ fontSize: "0.85rem", padding: "0.7rem 1.6rem" }}
         >
           ← ULANG SEMUA
         </button>
@@ -1849,10 +1870,10 @@ function ReviewScreen({
         <button
           onClick={handleFinish}
           disabled={isProcessing}
-          className="pixel-btn flex items-center gap-2"
+          className="pixel-btn flex items-center gap-2 cursor-pointer hover:scale-105 active:scale-95 transition-transform shadow-[4px_4px_0_0_rgba(58,42,64,0.3)]"
           style={{
-            fontSize: "0.9rem",
-            padding: "0.75rem 1.8rem",
+            fontSize: "0.95rem",
+            padding: "0.75rem 2rem",
             background: "var(--color-sage)",
             color: "#1f2937",
           }}
