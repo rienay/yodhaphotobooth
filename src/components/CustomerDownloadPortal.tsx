@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import yodhaLogo from "@/assets/yodha.png";
 import { generateGifFromPhotos } from "@/lib/gif";
+import { detectHolesFromImage, loadImg, composeLiveVideoFrame } from "@/lib/frameLive";
 
 interface CustomerDownloadPortalProps {
   sessionCode: string;
@@ -354,15 +355,21 @@ export function CustomerDownloadPortal({
         {/* ── TAB 2: ANIMASI GIF ── */}
         {activeTab === "gif" && (
           <div className="space-y-4 animate-in fade-in duration-200">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex flex-col items-center">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col items-center">
               {gifUrl || session.gif_url ? (
                 <>
-                  <div className="w-full max-w-[340px] aspect-square bg-slate-950 rounded-xl overflow-hidden flex items-center justify-center shadow-2xl border border-slate-800/80 p-1">
+                  <div className="w-full max-w-[340px] bg-slate-950 rounded-xl overflow-hidden flex items-center justify-center shadow-2xl border border-slate-800/80 p-2">
                     <img
                       src={(gifUrl || session.gif_url)!}
                       alt="Animasi GIF Photobooth"
-                      className="w-full h-full object-contain rounded-lg"
+                      className="w-full h-auto object-contain rounded-lg"
                     />
+                  </div>
+
+                  <div className="pt-2 text-center">
+                    <span className="text-[10px] text-slate-400 font-mono bg-slate-800/80 px-2.5 py-1 rounded-full border border-slate-700">
+                      Rasio Kamera Asli Photobooth
+                    </span>
                   </div>
 
                   <div className="w-full pt-4 space-y-2">
@@ -388,7 +395,7 @@ export function CustomerDownloadPortal({
                 <div className="py-16 text-center space-y-3 text-slate-400">
                   <div className="w-10 h-10 border-3 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
                   <p className="text-xs font-semibold text-slate-300">Sedang merender animasi GIF...</p>
-                  <p className="text-[10px] text-slate-500">Menggabungkan seluruh pose foto menjadi loop bergerak</p>
+                  <p className="text-[10px] text-slate-500">Menggabungkan seluruh pose foto dengan rasio asli kamera</p>
                 </div>
               ) : (
                 <div className="py-16 text-center space-y-2 text-slate-400">
@@ -400,11 +407,13 @@ export function CustomerDownloadPortal({
           </div>
         )}
 
-        {/* ── TAB 3: FOTO LIVE (INTERACTIVE LIVE PHOTO BOOMERANG) ── */}
+        {/* ── TAB 3: FOTO LIVE (VIDEO 3 DETIK MASUK KE DALAM FRAME) ── */}
         {activeTab === "live" && (
           <div className="space-y-4 animate-in fade-in duration-200">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col items-center">
-              {rawPhotos.length > 0 ? (
+              {session.live_videos && session.live_videos.length > 0 ? (
+                <FramedLiveView session={session} triggerDownload={triggerDownload} />
+              ) : rawPhotos.length > 0 ? (
                 <>
                   <div
                     onClick={() => setIsLivePlaying((p) => !p)}
@@ -557,6 +566,244 @@ export function CustomerDownloadPortal({
           <p>Terima kasih telah berfoto bersama Yodha Photobooth!</p>
         </footer>
       </main>
+    </div>
+  );
+}
+
+/**
+ * Visual Framed Live Photo Player & Exporter
+ * Displays 3-second live pose videos playing inside photo frame holes simultaneously!
+ */
+function FramedLiveView({
+  session,
+  triggerDownload,
+}: {
+  session: PhotoboothSession;
+  triggerDownload: (url: string, filename: string) => void;
+}) {
+  const liveVideos = session.live_videos || [];
+  const [holes, setHoles] = useState<{ left: number; top: number; width: number; height: number }[]>([]);
+  const [frameAspect, setFrameAspect] = useState<number>(2 / 3);
+  const [isComposing, setIsComposing] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState("");
+
+  const templateSrc = session.template_url || "";
+
+  useEffect(() => {
+    let active = true;
+    async function loadTemplate() {
+      if (templateSrc) {
+        try {
+          const img = await loadImg(templateSrc);
+          if (!active) return;
+          const detected = detectHolesFromImage(img);
+          const w = img.naturalWidth || img.width;
+          const h = img.naturalHeight || img.height;
+          if (w && h) setFrameAspect(w / h);
+
+          if (detected.length > 0) {
+            setHoles(
+              detected.map((hObj) => ({
+                left: (hObj.x / w) * 100,
+                top: (hObj.y / h) * 100,
+                width: (hObj.w / w) * 100,
+                height: (hObj.h / h) * 100,
+              }))
+            );
+            return;
+          }
+        } catch (err) {
+          console.warn("Could not load template image for live holes:", err);
+        }
+      }
+
+      // Default layout holes fallback if template overlay has no detected holes
+      const l = session.layout || "4x2";
+      if (l === "4x2") {
+        const hArr = [];
+        for (let r = 0; r < 4; r++) {
+          for (let c = 0; c < 2; c++) {
+            hArr.push({
+              left: 5 + c * 48,
+              top: 5 + r * 23.5,
+              width: 42,
+              height: 21,
+            });
+          }
+        }
+        setHoles(hArr);
+        setFrameAspect(10 / 15);
+      } else if (l === "3x2") {
+        const hArr = [];
+        for (let r = 0; r < 3; r++) {
+          for (let c = 0; c < 2; c++) {
+            hArr.push({
+              left: 6 + c * 47,
+              top: 5 + r * 30,
+              width: 41,
+              height: 27,
+            });
+          }
+        }
+        setHoles(hArr);
+        setFrameAspect(10 / 15);
+      } else if (l === "2x1") {
+        setHoles([
+          { left: 10, top: 8, width: 80, height: 42 },
+          { left: 10, top: 52, width: 80, height: 42 },
+        ]);
+        setFrameAspect(5 / 15);
+      } else if (l === "1x1") {
+        setHoles([{ left: 8, top: 8, width: 84, height: 75 }]);
+        setFrameAspect(10 / 15);
+      } else {
+        // 3x1
+        setHoles([
+          { left: 10, top: 6, width: 80, height: 28 },
+          { left: 10, top: 36, width: 80, height: 28 },
+          { left: 10, top: 66, width: 80, height: 28 },
+        ]);
+        setFrameAspect(5 / 15);
+      }
+    }
+
+    loadTemplate();
+    return () => {
+      active = false;
+    };
+  }, [templateSrc, session.layout]);
+
+  const handleDownloadFramedVideo = async () => {
+    // If pre-generated framed video is in session.live_photo_url and ends with .webm/.mp4
+    if (
+      session.live_photo_url &&
+      (session.live_photo_url.includes(".webm") || session.live_photo_url.includes(".mp4"))
+    ) {
+      triggerDownload(session.live_photo_url, `${session.session_code}_live_framed.webm`);
+      return;
+    }
+
+    // Otherwise, generate client-side composite
+    if (isComposing) return;
+    setIsComposing(true);
+    setDownloadProgress("Merender video frame live 3 detik...");
+    try {
+      const targetTemplate = session.template_url || session.strip_url;
+      const compositeUrl = await composeLiveVideoFrame(targetTemplate, liveVideos, session.layout || "4x2");
+      if (compositeUrl) {
+        triggerDownload(compositeUrl, `${session.session_code}_live_framed.webm`);
+      } else {
+        alert("Gagal merender video frame live di browser ini.");
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert("Gagal merender video: " + (e?.message || "Format video tidak didukung"));
+    } finally {
+      setIsComposing(false);
+      setDownloadProgress("");
+    }
+  };
+
+  return (
+    <div className="w-full flex flex-col items-center gap-4">
+      {/* Framed Video Container */}
+      <div
+        className="relative w-full max-w-[320px] rounded-2xl overflow-hidden shadow-2xl border-2 border-amber-500/40 bg-slate-950 flex items-center justify-center select-none"
+        style={{ aspectRatio: `${frameAspect}` }}
+      >
+        {/* Videos inside frame holes */}
+        {holes.map((hole, i) => {
+          const videoIdx = session.layout === "4x2" ? Math.floor(i / 2) : i;
+          const vSrc = liveVideos[videoIdx % liveVideos.length];
+          return (
+            <div
+              key={i}
+              className="absolute overflow-hidden bg-slate-900"
+              style={{
+                left: `${hole.left}%`,
+                top: `${hole.top}%`,
+                width: `${hole.width}%`,
+                height: `${hole.height}%`,
+              }}
+            >
+              {vSrc ? (
+                <video
+                  src={vSrc}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-cover scale-x-[-1]"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-500">
+                  Pose #{videoIdx + 1}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Frame Overlay */}
+        {templateSrc && (
+          <img
+            src={templateSrc}
+            alt="Bingkai Photobooth"
+            className="absolute inset-0 w-full h-full object-contain pointer-events-none z-10"
+          />
+        )}
+
+        {/* Live Badge */}
+        <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[10px] font-black uppercase tracking-wider shadow-md">
+          <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
+          <span>LIVE PHOTO 3s</span>
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="w-full space-y-2">
+        <button
+          onClick={handleDownloadFramedVideo}
+          disabled={isComposing}
+          className="w-full py-3 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+        >
+          {isComposing ? (
+            <>
+              <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+              <span>{downloadProgress || "Sedang memproses..."}</span>
+            </>
+          ) : (
+            <>
+              <Download className="w-4 h-4" />
+              <span>Unduh Video Frame Live (.webm / .mp4)</span>
+            </>
+          )}
+        </button>
+
+        <p className="text-[10px] text-slate-400 text-center">
+          Video 3 detik setiap gaya bergerak serentak di dalam bingkai foto!
+        </p>
+
+        {/* Download Individual 3s Clips */}
+        <div className="pt-3 border-t border-slate-800 space-y-2">
+          <div className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+            <Film className="w-3.5 h-3.5 text-amber-400" />
+            <span>Unduh Klip Video 3 Detik Per Gaya:</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {liveVideos.map((vUrl, idx) => (
+              <button
+                key={idx}
+                onClick={() => triggerDownload(vUrl, `${session.session_code}_pose_${idx + 1}_3s.webm`)}
+                className="py-2 px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] font-semibold flex items-center justify-between transition-colors cursor-pointer border border-slate-700/60"
+              >
+                <span>Gaya #{idx + 1} (3s)</span>
+                <Download className="w-3 h-3 text-amber-400" />
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

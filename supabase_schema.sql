@@ -37,17 +37,20 @@ CREATE TABLE IF NOT EXISTS public.photobooth_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_code TEXT NOT NULL,
     layout TEXT NOT NULL,
-    variant TEXT DEFAULT '',
+    template_url TEXT,
     strip_url TEXT NOT NULL,
     gif_url TEXT,
     live_photo_url TEXT,
+    live_videos JSONB DEFAULT '[]'::jsonb,
     raw_photos JSONB DEFAULT '[]'::jsonb,
     total_photos INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
 -- Migrasi jika tabel sudah ada sebelumnya:
+ALTER TABLE public.photobooth_sessions ADD COLUMN IF NOT EXISTS template_url TEXT;
 ALTER TABLE public.photobooth_sessions ADD COLUMN IF NOT EXISTS live_photo_url TEXT;
+ALTER TABLE public.photobooth_sessions ADD COLUMN IF NOT EXISTS live_videos JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.photobooth_sessions ADD COLUMN IF NOT EXISTS raw_photos JSONB DEFAULT '[]'::jsonb;
 
 ALTER TABLE public.photobooth_sessions ENABLE ROW LEVEL SECURITY;

@@ -15,9 +15,11 @@ export interface PhotoboothSession {
   session_code: string;
   layout: string;
   variant?: string;
+  template_url?: string;
   strip_url: string;
   gif_url?: string;
   live_photo_url?: string;
+  live_videos?: string[];
   raw_photos?: string[];
   total_photos?: number;
   created_at?: string;
@@ -250,9 +252,11 @@ export class SessionDB {
           session_code: sessionData.session_code,
           layout: sessionData.layout,
           variant: sessionData.variant || "",
+          template_url: sessionData.template_url || null,
           strip_url: sessionData.strip_url,
           gif_url: sessionData.gif_url || null,
           live_photo_url: sessionData.live_photo_url || null,
+          live_videos: sessionData.live_videos || [],
           raw_photos: sessionData.raw_photos || [],
           total_photos: sessionData.total_photos || 0,
           created_at: sessionData.created_at,

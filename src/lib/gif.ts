@@ -12,17 +12,36 @@ function loadImg(src: string): Promise<HTMLImageElement> {
 }
 
 /**
- * Generate animated GIF from photos array using pure JS gifenc (works 100% offline without CDN)
+ * Generate animated GIF from photos array with dimensions matching camera aspect ratio
  */
 export async function generateGifFromPhotos(
   photos: string[],
-  width = 500,
-  height = 500,
+  maxDimension = 640,
   delay = 500
 ): Promise<string> {
   if (!photos || photos.length === 0) {
     throw new Error("No photos to generate GIF");
   }
+
+  // Load first image to determine camera native aspect ratio
+  const firstImg = await loadImg(photos[0]);
+  const camW = firstImg.naturalWidth || firstImg.width || 1280;
+  const camH = firstImg.naturalHeight || firstImg.height || 960;
+  const aspect = camW / camH;
+
+  let width: number;
+  let height: number;
+  if (aspect >= 1) {
+    width = maxDimension;
+    height = Math.round(maxDimension / aspect);
+  } else {
+    height = maxDimension;
+    width = Math.round(maxDimension * aspect);
+  }
+
+  // Ensure even dimensions for GIF compatibility
+  if (width % 2 !== 0) width += 1;
+  if (height % 2 !== 0) height += 1;
 
   const gif = GIFEncoder();
   const canvas = document.createElement("canvas");
@@ -32,17 +51,11 @@ export async function generateGifFromPhotos(
   if (!ctx) throw new Error("Canvas context could not be created");
 
   for (let i = 0; i < photos.length; i++) {
-    const img = await loadImg(photos[i]);
+    const img = i === 0 ? firstImg : await loadImg(photos[i]);
     ctx.clearRect(0, 0, width, height);
 
-    // Center crop to fill canvas
-    const scale = Math.max(width / img.width, height / img.height);
-    const drawW = img.width * scale;
-    const drawH = img.height * scale;
-    const drawX = (width - drawW) / 2;
-    const drawY = (height - drawH) / 2;
-
-    ctx.drawImage(img, drawX, drawY, drawW, drawH);
+    // Draw image exactly matching camera aspect ratio
+    ctx.drawImage(img, 0, 0, width, height);
 
     const imgData = ctx.getImageData(0, 0, width, height);
     const palette = quantize(imgData.data, 256);

@@ -6,6 +6,7 @@ import { AdminLogin } from "@/components/AdminLogin";
 import { TemplateDB, CustomTemplate, SessionDB, SettingsDB } from "@/lib/db";
 import { isSupabaseConfigured, uploadToStorage, getSupabaseAnonKey, getSupabaseUrl } from "@/lib/supabase";
 import { generateGifFromPhotos } from "@/lib/gif";
+import { recordLiveClip, composeLiveVideoFrame } from "@/lib/frameLive";
 import {
   isAdminAuthenticated,
   isBoothAccessAllowed,
@@ -241,6 +242,7 @@ function Photobooth() {
   const [variant, setVariant] = useState<string>("raicab16");
   const frame: FrameId = "template";
   const [photos, setPhotos] = useState<string[]>([]);
+  const [liveVideos, setLiveVideos] = useState<string[]>([]);
   const [strip, setStrip] = useState<string | null>(null);
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen();
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -448,6 +450,7 @@ function Photobooth() {
             onNext={() => {
               ensureFullscreen();
               setPhotos([]);
+              setLiveVideos([]);
               setStrip(null);
               setScreen("shoot");
             }}
@@ -461,8 +464,9 @@ function Photobooth() {
             selectedFilter={selectedFilter}
             photos={photos}
             setPhotos={setPhotos}
-            onPhotosCaptured={(captured) => {
+            onPhotosCaptured={(captured, capturedVideos) => {
               setPhotos(captured);
+              setLiveVideos(capturedVideos);
               setScreen("review");
             }}
             onBack={() => setScreen("filter")}
@@ -475,6 +479,8 @@ function Photobooth() {
           <ReviewScreen
             photos={photos}
             setPhotos={setPhotos}
+            liveVideos={liveVideos}
+            setLiveVideos={setLiveVideos}
             layout={layout}
             variant={variant}
             selectedFilter={selectedFilter}
@@ -489,13 +495,14 @@ function Photobooth() {
         {screen === "result" && strip && (
           <ResultScreen
             photos={photos}
+            liveVideos={liveVideos}
             frame={frame}
             layout={layout}
             variant={variant}
             strip={strip}
             setStrip={setStrip}
-            onRetake={() => { setPhotos([]); setStrip(null); setScreen("shoot"); }}
-            onHome={() => { setPhotos([]); setStrip(null); setScreen("home"); }}
+            onRetake={() => { setPhotos([]); setLiveVideos([]); setStrip(null); setScreen("shoot"); }}
+            onHome={() => { setPhotos([]); setLiveVideos([]); setStrip(null); setScreen("home"); }}
             templates={templates}
           />
         )}
@@ -1251,7 +1258,7 @@ function ShootScreen({
   selectedFilter?: string;
   photos: string[];
   setPhotos: (p: string[]) => void;
-  onPhotosCaptured: (captured: string[]) => void;
+  onPhotosCaptured: (captured: string[], capturedVideos: string[]) => void;
   onBack: () => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
@@ -1381,10 +1388,17 @@ function ShootScreen({
     if (shooting) return;
     setShooting(true);
     const captured: string[] = [];
+    const capturedVideos: string[] = [];
+
     for (let i = 0; i < total; i++) {
+      // Start recording 3-second live clip for this pose during countdown
+      const recordPromise = streamRef.current
+        ? recordLiveClip(streamRef.current, 3000)
+        : Promise.resolve("");
+
       for (let n = 3; n >= 1; n--) {
         setCountdown(n);
-        await wait(700);
+        await wait(1000); // 3 seconds total countdown
       }
       setCountdown(null);
       setFlashing(true);
@@ -1393,13 +1407,17 @@ function ShootScreen({
       setPhotos([...captured]);
       await wait(450);
       setFlashing(false);
+
+      const clip = await recordPromise;
+      if (clip) capturedVideos.push(clip);
+
       await wait(400);
     }
     setShooting(false);
     setProcessing(true);
     await wait(300);
     setProcessing(false);
-    onPhotosCaptured(captured);
+    onPhotosCaptured(captured, capturedVideos);
   }, [shooting, takeShot, setPhotos, onPhotosCaptured, total]);
 
   const statusText = () => {
@@ -1604,6 +1622,8 @@ function ShootScreen({
 function ReviewScreen({
   photos,
   setPhotos,
+  liveVideos,
+  setLiveVideos,
   layout,
   variant,
   selectedFilter,
@@ -1613,6 +1633,8 @@ function ReviewScreen({
 }: {
   photos: string[];
   setPhotos: (p: string[]) => void;
+  liveVideos: string[];
+  setLiveVideos: (v: string[]) => void;
   layout: LayoutId;
   variant: string;
   selectedFilter: string;
@@ -1672,9 +1694,13 @@ function ReviewScreen({
 
   const snapRetake = async () => {
     if (retakeIdx === null || !retakeVideoRef.current) return;
+    const recordPromise = retakeStreamRef.current
+      ? recordLiveClip(retakeStreamRef.current, 3000)
+      : Promise.resolve("");
+
     for (let n = 3; n >= 1; n--) {
       setRetakeCountdown(n);
-      await wait(700);
+      await wait(1000);
     }
     setRetakeCountdown(null);
     setRetakeFlashing(true);
@@ -1698,6 +1724,13 @@ function ReviewScreen({
       const updated = [...photos];
       updated[retakeIdx] = newShot;
       setPhotos(updated);
+
+      const newClip = await recordPromise;
+      if (newClip) {
+        const vUpdated = [...liveVideos];
+        vUpdated[retakeIdx] = newClip;
+        setLiveVideos(vUpdated);
+      }
     }
 
     await wait(400);
@@ -1880,6 +1913,7 @@ function Corner({ pos }: { pos: "tl" | "tr" | "bl" | "br" }) {
 
 function ResultScreen({
   photos,
+  liveVideos = [],
   frame,
   layout,
   variant,
@@ -1890,6 +1924,7 @@ function ResultScreen({
   templates,
 }: {
   photos: string[];
+  liveVideos?: string[];
   frame: FrameId;
   layout: LayoutId;
   variant: string;
@@ -2030,6 +2065,34 @@ function ResultScreen({
             }
           }
 
+          // Upload 3-second live videos per pose
+          const rawVideoUrls: string[] = [];
+          if (liveVideos && liveVideos.length > 0) {
+            for (let i = 0; i < liveVideos.length; i++) {
+              if (!liveVideos[i]) continue;
+              try {
+                const vUrl = await uploadToStorage(liveVideos[i], `photos/${sessionCode}_live_${i + 1}.webm`, "video/webm");
+                rawVideoUrls.push(vUrl);
+              } catch (vErr) {
+                console.warn(`Live video ${i + 1} upload warning:`, vErr);
+                rawVideoUrls.push(liveVideos[i]);
+              }
+            }
+          }
+
+          // Composite 3-second live videos inside the photostrip frame!
+          let framedLiveVideoUrl: string | undefined = undefined;
+          if (liveVideos && liveVideos.length > 0 && overlaySrc) {
+            try {
+              const framedVideoData = await composeLiveVideoFrame(overlaySrc, liveVideos, layout);
+              if (framedVideoData) {
+                framedLiveVideoUrl = await uploadToStorage(framedVideoData, `photos/${sessionCode}_framed_live.webm`, "video/webm");
+              }
+            } catch (flErr) {
+              console.warn("Framed live video composite warning:", flErr);
+            }
+          }
+
           // Generate & upload GIF
           try {
             if (active) setUploadStatus("generating_gif");
@@ -2053,9 +2116,11 @@ function ResultScreen({
             session_code: sessionCode,
             layout,
             variant,
+            template_url: overlaySrc || undefined,
             strip_url: finalStripUrl,
             gif_url: finalGifUrl,
-            live_photo_url: finalGifUrl || photos[0],
+            live_photo_url: framedLiveVideoUrl || rawVideoUrls[0] || finalGifUrl || photos[0],
+            live_videos: rawVideoUrls.length > 0 ? rawVideoUrls : (liveVideos || []),
             raw_photos: rawPhotoUrls,
             total_photos: photos.length,
           });
@@ -2069,14 +2134,23 @@ function ResultScreen({
 
       // 2. Fallback: Save session to local database cache if offline or not configured
       if (!dbSaved) {
+        let framedLiveVideoUrl: string | undefined = undefined;
+        if (liveVideos && liveVideos.length > 0 && overlaySrc) {
+          try {
+            framedLiveVideoUrl = await composeLiveVideoFrame(overlaySrc, liveVideos, layout);
+          } catch {}
+        }
+
         const sessionDB = new SessionDB();
         await sessionDB.saveSession({
           session_code: sessionCode,
           layout,
           variant,
+          template_url: overlaySrc || undefined,
           strip_url: strip,
           gif_url: finalGifUrl,
-          live_photo_url: photos[0],
+          live_photo_url: framedLiveVideoUrl || liveVideos[0] || photos[0],
+          live_videos: liveVideos || [],
           raw_photos: photos,
           total_photos: photos.length,
         });
