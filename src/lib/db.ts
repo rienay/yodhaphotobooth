@@ -17,6 +17,8 @@ export interface PhotoboothSession {
   variant?: string;
   strip_url: string;
   gif_url?: string;
+  live_photo_url?: string;
+  raw_photos?: string[];
   total_photos?: number;
   created_at?: string;
 }
@@ -252,6 +254,8 @@ export class SessionDB {
             variant: sessionData.variant || "",
             strip_url: sessionData.strip_url,
             gif_url: sessionData.gif_url || null,
+            live_photo_url: sessionData.live_photo_url || null,
+            raw_photos: sessionData.raw_photos || [],
             total_photos: sessionData.total_photos || 0,
             created_at: sessionData.created_at,
           })
@@ -300,6 +304,34 @@ export class SessionDB {
       return JSON.parse(localStorage.getItem(this.localKey) || "[]").slice(0, limit);
     } catch {
       return [];
+    }
+  }
+
+  async getSessionByCode(code: string): Promise<PhotoboothSession | null> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from("photobooth_sessions")
+          .select("*")
+          .or(`session_code.eq.${code},id.eq.${code}`)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data) {
+          return data;
+        }
+      } catch (err) {
+        console.warn("Failed to fetch session from Supabase:", err);
+      }
+    }
+
+    // Fallback to localStorage
+    try {
+      const existing: PhotoboothSession[] = JSON.parse(localStorage.getItem(this.localKey) || "[]");
+      return existing.find((s) => s.session_code === code || s.id === code) || null;
+    } catch {
+      return null;
     }
   }
 }

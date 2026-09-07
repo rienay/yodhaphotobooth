@@ -38,6 +38,8 @@ import raicab16Asset from "@/assets/raicab/16.png";
 import raicab17Asset from "@/assets/raicab/17.png";
 import raicab18Asset from "@/assets/raicab/18.png";
 
+import { CustomerDownloadPortal } from "@/components/CustomerDownloadPortal";
+
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
@@ -54,9 +56,26 @@ export const Route = createFileRoute("/")({
   component: Photobooth,
 });
 
-type Screen = "home" | "frame" | "shoot" | "result" | "admin";
+type Screen = "home" | "frame" | "filter" | "shoot" | "review" | "result" | "admin";
 type FrameId = "cafe" | "gameboy" | "bedroom" | "template";
 type LayoutId = "3x1" | "3x2" | "2x1" | "1x1" | "2x2" | "4x2";
+
+export interface CameraFilter {
+  id: string;
+  name: string;
+  css: string;
+  emoji: string;
+  desc: string;
+}
+
+export const PHOTO_FILTERS: CameraFilter[] = [
+  { id: "normal", name: "Alami (Normal)", css: "none", emoji: "✨", desc: "Warna jernih natural" },
+  { id: "warm", name: "Vintage Hangat", css: "sepia(0.35) contrast(1.05) brightness(1.02) saturate(1.15)", emoji: "🎞️", desc: "Sentuhan retro 90-an" },
+  { id: "bw", name: "Hitam Putih (B&W)", css: "grayscale(1) contrast(1.2) brightness(1.05)", emoji: "🖤", desc: "Monokrom klasik elegan" },
+  { id: "glow", name: "Soft Barbie Glow", css: "contrast(1.05) brightness(1.1) saturate(1.25)", emoji: "🌸", desc: "Cerah lembut bercahaya" },
+  { id: "cool", name: "Cool Cinema", css: "contrast(1.1) hue-rotate(185deg) saturate(0.9)", emoji: "❄️", desc: "Nuansa sejuk sinematik" },
+  { id: "cyber", name: "Retro Cyber", css: "contrast(1.3) saturate(1.4) brightness(1.04)", emoji: "⚡", desc: "Warna kontras tinggi pop" },
+];
 
 // Physical print sizes (cm) per layout
 const PRINT_SIZES: Record<LayoutId, { w: number; h: number; sheets: number; label: string }> = {
@@ -184,6 +203,13 @@ function Photobooth() {
   const [exitPin, setExitPin] = useState("");
   const [exitError, setExitError] = useState("");
 
+  const [customerSessionCode, setCustomerSessionCode] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    return params.get("session") || params.get("download") || null;
+  });
+  const [selectedFilter, setSelectedFilter] = useState<string>("normal");
+
   const [screen, setScreen] = useState<Screen>("home");
   const [layout, setLayout] = useState<LayoutId>("4x2");
   const [variant, setVariant] = useState<string>("raicab16");
@@ -302,6 +328,21 @@ function Photobooth() {
     }
   };
 
+  // ────────────────── MODE 0: CUSTOMER DOWNLOAD PORTAL (QR CODE SCAN) ──────────────────
+  if (customerSessionCode) {
+    return (
+      <CustomerDownloadPortal
+        sessionCode={customerSessionCode}
+        onBackToBooth={() => {
+          setCustomerSessionCode(null);
+          if (typeof window !== "undefined") {
+            window.history.replaceState(null, "", window.location.pathname);
+          }
+        }}
+      />
+    );
+  }
+
   // ──────────────────────── MODE 1: ADMIN AREA ────────────────────────
   if (!isBoothMode) {
     if (!isAdminAuth) {
@@ -377,11 +418,22 @@ function Photobooth() {
             onBack={() => setScreen("home")}
             onNext={() => {
               ensureFullscreen();
+              setScreen("filter");
+            }}
+            templates={templates}
+          />
+        )}
+        {screen === "filter" && (
+          <FilterScreen
+            selectedFilter={selectedFilter}
+            setSelectedFilter={setSelectedFilter}
+            onBack={() => setScreen("frame")}
+            onNext={() => {
+              ensureFullscreen();
               setPhotos([]);
               setStrip(null);
               setScreen("shoot");
             }}
-            templates={templates}
           />
         )}
         {screen === "shoot" && (
@@ -389,13 +441,32 @@ function Photobooth() {
             frame={frame}
             layout={layout}
             variant={variant}
+            selectedFilter={selectedFilter}
             photos={photos}
             setPhotos={setPhotos}
-            onDone={(stripDataUrl) => { setStrip(stripDataUrl); setScreen("result"); }}
-            onBack={() => setScreen("frame")}
+            onPhotosCaptured={(captured) => {
+              setPhotos(captured);
+              setScreen("review");
+            }}
+            onBack={() => setScreen("filter")}
             isFullscreen={isFullscreen}
             onToggleFullscreen={toggleFullscreen}
             templates={templates}
+          />
+        )}
+        {screen === "review" && (
+          <ReviewScreen
+            photos={photos}
+            setPhotos={setPhotos}
+            layout={layout}
+            variant={variant}
+            selectedFilter={selectedFilter}
+            templates={templates}
+            onBack={() => setScreen("shoot")}
+            onFinish={async (finalStrip) => {
+              setStrip(finalStrip);
+              setScreen("result");
+            }}
           />
         )}
         {screen === "result" && strip && (
@@ -994,17 +1065,169 @@ function LayoutPreview({ layout }: { layout: LayoutId }) {
   );
 }
 
+/* ───────────────────────── Filter (Live Preview) ───────────────────────── */
+
+function FilterScreen({
+  selectedFilter,
+  setSelectedFilter,
+  onBack,
+  onNext,
+}: {
+  selectedFilter: string;
+  setSelectedFilter: (f: string) => void;
+  onBack: () => void;
+  onNext: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const activeFilter = PHOTO_FILTERS.find(f => f.id === selectedFilter) || PHOTO_FILTERS[0];
+
+  useEffect(() => {
+    let cancelled = false;
+    async function init() {
+      try {
+        const selectedDeviceId = localStorage.getItem("yodha_camera_device_id");
+        let stream: MediaStream;
+        try {
+          const videoConstraints: MediaTrackConstraints = selectedDeviceId
+            ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 960 } }
+            : { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } };
+          stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+        } catch (e1) {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+        if (cancelled) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
+        }
+      } catch (e) {
+        setError("Kamera tidak dapat diakses. Izinkan akses kamera pada browser Anda.");
+      }
+    }
+    init();
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach(t => t.stop());
+    };
+  }, []);
+
+  return (
+    <div className="w-full max-w-4xl flex flex-col items-center gap-5 sm:gap-7">
+      <div className="text-center space-y-1">
+        <h2 className="pixel text-lg sm:text-2xl text-[var(--color-ink)]">
+          PILIH FILTER KAMERA ✨
+        </h2>
+        <p className="text-xs sm:text-sm text-slate-500 font-sans">
+          Pratinjau langsung tampilan wajah Anda sebelum sesi pemotretan dimulai.
+        </p>
+      </div>
+
+      {/* Live Viewfinder Box */}
+      <div className="relative w-full max-w-xl aspect-[4/3] rounded-2xl overflow-hidden border-4 border-[#3A2A40] bg-black shadow-[8px_8px_0_0_rgba(58,42,64,0.25)] flex items-center justify-center">
+        {!error && (
+          <video
+            ref={videoRef}
+            playsInline
+            muted
+            className="w-full h-full object-cover transition-all duration-300"
+            style={{
+              transform: "scaleX(-1)",
+              filter: activeFilter.css,
+            }}
+          />
+        )}
+
+        {error && (
+          <div className="text-center p-6 text-white space-y-2">
+            <span className="text-4xl">📵</span>
+            <p className="text-xs text-red-400 font-bold">{error}</p>
+          </div>
+        )}
+
+        {/* Live Filter Indicator Badge */}
+        <div className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white text-[11px] font-sans">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="font-bold">{activeFilter.emoji} {activeFilter.name}</span>
+        </div>
+
+        <div className="absolute bottom-4 left-4 right-4 z-20 flex items-center justify-between px-3 py-1.5 rounded-xl bg-black/60 backdrop-blur-md border border-white/20 text-white text-[11px] font-sans">
+          <span className="text-slate-300">{activeFilter.desc}</span>
+          <span className="text-[10px] text-amber-300 font-bold tracking-wider uppercase">Live View</span>
+        </div>
+      </div>
+
+      {/* Filter Selector Buttons */}
+      <div className="w-full max-w-xl grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {PHOTO_FILTERS.map((f) => {
+          const isSelected = f.id === selectedFilter;
+          return (
+            <button
+              key={f.id}
+              onClick={() => setSelectedFilter(f.id)}
+              className={`p-3 rounded-xl flex flex-col items-center text-center transition-all cursor-pointer border-2 ${
+                isSelected
+                  ? "border-[#3A2A40] bg-[var(--color-butter)] shadow-[3px_3px_0_0_#3A2A40] -translate-y-0.5"
+                  : "border-slate-200 bg-white hover:border-slate-400 shadow-xs"
+              }`}
+            >
+              <span className="text-2xl mb-1">{f.emoji}</span>
+              <span className="pixel text-[10px] text-[#3A2A40] font-bold leading-tight">
+                {f.name}
+              </span>
+              <span className="text-[9px] text-slate-500 font-sans mt-0.5 line-clamp-1">
+                {f.desc}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Navigation Buttons */}
+      <div className="flex items-center justify-between w-full max-w-xl pt-2">
+        <button
+          onClick={onBack}
+          className="pixel-btn-powder flex items-center gap-2"
+          style={{ fontSize: "0.8rem", padding: "0.6rem 1.2rem" }}
+        >
+          ← PILIH BINGKAI
+        </button>
+
+        <button
+          onClick={onNext}
+          className="pixel-btn flex items-center gap-2"
+          style={{
+            fontSize: "0.85rem",
+            padding: "0.7rem 1.6rem",
+            background: "var(--color-ink)",
+            color: "white",
+          }}
+        >
+          MULAI FOTO 📸 →
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ───────────────────────── Shoot ───────────────────────── */
 
 function ShootScreen({
-  frame, layout, variant, photos, setPhotos, onDone, onBack, isFullscreen, onToggleFullscreen, templates,
+  frame, layout, variant, selectedFilter = "normal", photos, setPhotos, onPhotosCaptured, onBack, isFullscreen, onToggleFullscreen, templates,
 }: {
   frame: FrameId;
   layout: LayoutId;
   variant: string;
+  selectedFilter?: string;
   photos: string[];
   setPhotos: (p: string[]) => void;
-  onDone: (strip: string) => void;
+  onPhotosCaptured: (captured: string[]) => void;
   onBack: () => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
@@ -1122,9 +1345,13 @@ function ShootScreen({
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.translate(w, 0); ctx.scale(-1, 1);
+    const filterObj = PHOTO_FILTERS.find(f => f.id === selectedFilter);
+    if (filterObj && filterObj.css && filterObj.css !== "none") {
+      ctx.filter = filterObj.css;
+    }
     ctx.drawImage(video, 0, 0, w, h);
     return canvas.toDataURL("image/jpeg", 0.95);
-  }, []);
+  }, [selectedFilter]);
 
   const runSequence = useCallback(async () => {
     if (shooting) return;
@@ -1147,25 +1374,9 @@ function ShootScreen({
     setShooting(false);
     setProcessing(true);
     await wait(300);
-    const activeTemplate = templates.find(t => t.id === (layout + "_" + variant) || t.id === variant);
-    const customImg = activeTemplate?.img;
-    const presetId = activeTemplate?.presetId || variant;
-
-    let strip: string;
-    if (frame === "template") {
-      strip = await composeTemplateFrame(captured, variant, customImg, presetId, layout);
-    } else if (layout === "3x2") {
-      strip = await compose3x2Frame(captured, variant, customImg, presetId);
-    } else if (layout === "3x1" && variant !== "default") {
-      strip = await compose3x1Variant(captured, variant, customImg, presetId);
-    } else if (layout === "2x1" && variant !== "default") {
-      strip = await compose2x1Variant(captured, variant, customImg, presetId);
-    } else {
-      strip = await composeStrip(captured, frame, layout);
-    }
     setProcessing(false);
-    onDone(strip);
-  }, [shooting, takeShot, setPhotos, frame, layout, onDone, total, variant, templates]);
+    onPhotosCaptured(captured);
+  }, [shooting, takeShot, setPhotos, onPhotosCaptured, total]);
 
   const statusText = () => {
     if (error) return "OOPS!";
@@ -1187,7 +1398,10 @@ function ShootScreen({
           playsInline
           muted
           className="absolute inset-0 w-full h-full object-cover"
-          style={{ transform: "scaleX(-1)" }}
+          style={{
+            transform: "scaleX(-1)",
+            filter: PHOTO_FILTERS.find(f => f.id === selectedFilter)?.css || "none",
+          }}
         />
       )}
 
@@ -1361,6 +1575,277 @@ function ShootScreen({
   );
 }
 
+/* ───────────────────────── Review & Retake Per Photo ───────────────────────── */
+
+function ReviewScreen({
+  photos,
+  setPhotos,
+  layout,
+  variant,
+  selectedFilter,
+  templates,
+  onBack,
+  onFinish,
+}: {
+  photos: string[];
+  setPhotos: (p: string[]) => void;
+  layout: LayoutId;
+  variant: string;
+  selectedFilter: string;
+  templates: Template[];
+  onBack: () => void;
+  onFinish: (finalStrip: string) => Promise<void> | void;
+}) {
+  const [retakeIdx, setRetakeIdx] = useState<number | null>(null);
+  const [retakeCountdown, setRetakeCountdown] = useState<number | null>(null);
+  const [retakeFlashing, setRetakeFlashing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const retakeVideoRef = useRef<HTMLVideoElement | null>(null);
+  const retakeStreamRef = useRef<MediaStream | null>(null);
+
+  const activeFilter = PHOTO_FILTERS.find((f) => f.id === selectedFilter) || PHOTO_FILTERS[0];
+
+  // Open camera when retakeIdx is set
+  useEffect(() => {
+    if (retakeIdx === null) return;
+    let cancelled = false;
+
+    async function startRetakeCamera() {
+      try {
+        const selectedDeviceId = localStorage.getItem("yodha_camera_device_id");
+        let stream: MediaStream;
+        try {
+          const videoConstraints: MediaTrackConstraints = selectedDeviceId
+            ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 960 } }
+            : { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } };
+          stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+        } catch (e1) {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        retakeStreamRef.current = stream;
+        if (retakeVideoRef.current) {
+          retakeVideoRef.current.srcObject = stream;
+          await retakeVideoRef.current.play().catch(() => {});
+        }
+      } catch (err) {
+        console.error("Failed opening camera for retake:", err);
+      }
+    }
+
+    startRetakeCamera();
+
+    return () => {
+      cancelled = true;
+      retakeStreamRef.current?.getTracks().forEach((t) => t.stop());
+      retakeStreamRef.current = null;
+    };
+  }, [retakeIdx]);
+
+  const snapRetake = async () => {
+    if (retakeIdx === null || !retakeVideoRef.current) return;
+    for (let n = 3; n >= 1; n--) {
+      setRetakeCountdown(n);
+      await wait(700);
+    }
+    setRetakeCountdown(null);
+    setRetakeFlashing(true);
+
+    const video = retakeVideoRef.current;
+    const canvas = document.createElement("canvas");
+    const w = video.videoWidth || 1280;
+    const h = video.videoHeight || 960;
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.translate(w, 0);
+      ctx.scale(-1, 1);
+      if (activeFilter.css && activeFilter.css !== "none") {
+        ctx.filter = activeFilter.css;
+      }
+      ctx.drawImage(video, 0, 0, w, h);
+      const newShot = canvas.toDataURL("image/jpeg", 0.95);
+
+      const updated = [...photos];
+      updated[retakeIdx] = newShot;
+      setPhotos(updated);
+    }
+
+    await wait(400);
+    setRetakeFlashing(false);
+    setRetakeIdx(null);
+  };
+
+  const handleFinish = async () => {
+    if (isProcessing) return;
+    setIsProcessing(true);
+
+    try {
+      const activeTemplate = templates.find((t) => t.id === `${layout}_${variant}` || t.id === variant);
+      const customImg = activeTemplate?.img;
+      const presetId = activeTemplate?.presetId || variant;
+
+      let stripResult: string;
+      if (customImg) {
+        stripResult = await composeTemplateFrame(photos, variant, customImg, presetId, layout);
+      } else if (layout === "3x2") {
+        stripResult = await compose3x2Frame(photos, variant, customImg, presetId);
+      } else if (layout === "3x1" && variant !== "default") {
+        stripResult = await compose3x1Variant(photos, variant, customImg, presetId);
+      } else if (layout === "2x1" && variant !== "default") {
+        stripResult = await compose2x1Variant(photos, variant, customImg, presetId);
+      } else {
+        stripResult = await composeStrip(photos, "template", layout);
+      }
+
+      await onFinish(stripResult);
+    } catch (e) {
+      console.error("Failed composing strip:", e);
+      alert("Gagal menyusun bingkai foto. Coba lagi.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="w-full max-w-4xl flex flex-col items-center gap-6">
+      <div className="text-center space-y-1">
+        <h2 className="pixel text-lg sm:text-2xl text-[var(--color-ink)]">
+          PRATINJAU HASIL FOTO 📸
+        </h2>
+        <p className="text-xs sm:text-sm text-slate-500 font-sans">
+          Klik foto yang ingin diulang (retake), atau klik <strong>Selesai & Cetak</strong> jika sudah puas!
+        </p>
+      </div>
+
+      {/* Grid of photos */}
+      <div className="w-full max-w-2xl grid grid-cols-2 sm:grid-cols-2 gap-4">
+        {photos.map((photo, i) => (
+          <div
+            key={i}
+            onClick={() => setRetakeIdx(i)}
+            className="group relative aspect-[4/3] rounded-2xl overflow-hidden border-4 border-[#3A2A40] bg-slate-900 shadow-[6px_6px_0_0_rgba(58,42,64,0.2)] cursor-pointer hover:scale-[1.02] transition-transform"
+          >
+            <img src={photo} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" />
+
+            {/* Badge top-left */}
+            <div className="absolute top-3 left-3 px-2.5 py-1 rounded-md bg-black/70 backdrop-blur-sm border border-white/20 text-white text-[10px] font-sans font-bold flex items-center gap-1">
+              <span>Foto #{i + 1}</span>
+            </div>
+
+            {/* Hover overlay hint */}
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white gap-1 backdrop-blur-[2px]">
+              <span className="text-2xl">↻</span>
+              <span className="pixel text-[10px] font-bold">KLIK FOTO ULANG</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Action Buttons */}
+      <div className="flex items-center justify-between w-full max-w-2xl pt-2">
+        <button
+          onClick={onBack}
+          className="pixel-btn-powder flex items-center gap-2"
+          style={{ fontSize: "0.8rem", padding: "0.6rem 1.2rem" }}
+        >
+          ← ULANG SEMUA
+        </button>
+
+        <button
+          onClick={handleFinish}
+          disabled={isProcessing}
+          className="pixel-btn flex items-center gap-2"
+          style={{
+            fontSize: "0.9rem",
+            padding: "0.75rem 1.8rem",
+            background: "var(--color-sage)",
+            color: "#1f2937",
+          }}
+        >
+          {isProcessing ? "MEMPROSES... ⏳" : "SELESAI & CETAK ➔"}
+        </button>
+      </div>
+
+      {/* Retake Modal */}
+      {retakeIdx !== null && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg bg-white rounded-3xl p-6 border-4 border-[#3A2A40] shadow-2xl flex flex-col items-center gap-4">
+            <div className="text-center">
+              <h3 className="pixel text-base text-[#3A2A40]">
+                FOTO ULANG (FOTO #{retakeIdx + 1})
+              </h3>
+              <p className="text-xs text-slate-500 font-sans mt-0.5">
+                Bersiap di depan kamera, lalu tekan tombol jepret di bawah.
+              </p>
+            </div>
+
+            {/* Viewfinder */}
+            <div className="relative w-full aspect-[4/3] rounded-2xl overflow-hidden border-2 border-[#3A2A40] bg-black flex items-center justify-center">
+              <video
+                ref={retakeVideoRef}
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+                style={{
+                  transform: "scaleX(-1)",
+                  filter: activeFilter.css,
+                }}
+              />
+
+              {retakeFlashing && (
+                <div className="absolute inset-0 bg-white flash pointer-events-none z-30" />
+              )}
+
+              {retakeCountdown !== null && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+                  <div
+                    className="pixel countdown-number"
+                    style={{
+                      fontSize: "6rem",
+                      color: "white",
+                      textShadow: "0 0 40px rgba(0,0,0,0.9), 4px 4px 0 rgba(0,0,0,0.7)",
+                      lineHeight: 1,
+                    }}
+                  >
+                    {retakeCountdown}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Retake Modal Actions */}
+            <div className="flex items-center justify-between w-full pt-1">
+              <button
+                type="button"
+                onClick={() => setRetakeIdx(null)}
+                className="pixel-btn-powder text-xs px-4 py-2"
+              >
+                BATAL
+              </button>
+
+              <button
+                type="button"
+                onClick={snapRetake}
+                disabled={retakeCountdown !== null}
+                className="pixel-btn text-xs px-6 py-2.5 flex items-center gap-2"
+                style={{ background: "var(--color-ink)", color: "white" }}
+              >
+                📸 JEPRET SEKARANG
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Corner({ pos }: { pos: "tl" | "tr" | "bl" | "br" }) {
   const base = "absolute w-3 h-3 bg-foreground";
   const map: Record<string, string> = { tl: "top-0 left-0", tr: "top-0 right-0", bl: "bottom-0 left-0", br: "bottom-0 right-0" };
@@ -1370,7 +1855,6 @@ function Corner({ pos }: { pos: "tl" | "tr" | "bl" | "br" }) {
 /* ───────────────────────── Result ───────────────────────── */
 
 function ResultScreen({
-  // ...props as before
   photos,
   frame,
   layout,
@@ -1391,28 +1875,10 @@ function ResultScreen({
   onHome: () => void;
   templates: Template[];
 }) {
-  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwjEdDj58epC0wLH3pHAbzpyaM9d_ab2qYXd-7Yf2da0lxYlEuVQMKxYoozqmPVCmRS/exec";
-  // Helper to upload a base64 image to Google Drive via Apps Script
-  const uploadFile = async (base64: string, filename: string) => {
-    try {
-      await fetch(APPS_SCRIPT_URL, {
-        method: "POST",
-        mode: "no-cors",
-        body: JSON.stringify({ image: base64, filename }),
-        headers: { "Content-Type": "text/plain;charset=utf-8" }
-      });
-      // Dengan no-cors, kita tidak bisa membaca response dari Google.
-      // Jadi kita asumsikan sukses dan langsung set QR code ke folder:
-      setQrCodeData(DRIVE_FOLDER_URL);
-    } catch (e) {
-      console.warn("Upload error for", filename, e);
-      throw e;
-    }
-  };
+  const [sessionCode] = useState(() => `YODHA-${Date.now().toString().slice(-6)}`);
 
   // Generate animated GIF from captured photos using gifshot (CDN loaded dynamically)
   const generateGifFromPhotos = async (photos: string[]): Promise<string> => {
-    // Return data URL of GIF
     return new Promise((resolve, reject) => {
       const loadGifshot = () => {
         // @ts-ignore
@@ -1439,16 +1905,20 @@ function ResultScreen({
       loadGifshot();
     });
   };
-  const DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/1lwRNyZWiwyWjOaAh9oDH-uA9pxWtScCN?usp=sharing";
 
   const [customText, setCustomText] = useState(() => {
     if (frame === "template") return "";
     return "★ YODHA-PHOTOBOOTH · " + new Date().toLocaleDateString() + " ★";
   });
-  const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading_db" | "generating_gif" | "uploading_png" | "success" | "error" | "demo">("idle");
+  const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading_db" | "generating_gif" | "uploading_raw" | "success" | "error" | "demo">("idle");
   const [autoResetSec, setAutoResetSec] = useState(AUTO_RESET_SECONDS);
   const [printCopies, setPrintCopies] = useState(1);
-  const [qrCodeData, setQrCodeData] = useState(DRIVE_FOLDER_URL);
+
+  // Customer download portal URL
+  const portalUrl = typeof window !== "undefined"
+    ? `${window.location.origin}${window.location.pathname}?session=${sessionCode}`
+    : `https://yodhaphotobooth.app/?session=${sessionCode}`;
+  const [qrCodeData, setQrCodeData] = useState(portalUrl);
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
 
   useEffect(() => {
@@ -1471,7 +1941,6 @@ function ResultScreen({
   }, [viewMode, photos]);
 
   const activeTemplate = templates.find(t => t.id === (layout + "_" + variant) || t.id === variant);
-  // All frames are now stored directly in the template img field; no legacy fallback needed
   const overlaySrc = activeTemplate?.img || "";
 
   const [detectedHoles, setDetectedHoles] = useState<{ left: number; top: number; width: number; height: number }[]>([]);
@@ -1523,16 +1992,16 @@ function ResultScreen({
     return () => clearInterval(interval);
   }, [onHome]);
 
-  // ── Upload to Supabase Database / Storage & Google Drive ───────────
+  // ── Upload to Supabase Database & Storage ───────────
   useEffect(() => {
     let active = true;
     if (!strip || uploadedRef.current === strip) return;
 
     async function uploadAndPersist() {
       uploadedRef.current = strip; // prevent duplicate uploads
-      const sessionCode = `YODHA-${Date.now().toString().slice(-6)}`;
       let finalStripUrl = strip;
       let finalGifUrl: string | undefined = undefined;
+      const rawPhotoUrls: string[] = [];
       let dbSaved = false;
 
       // 1. Try Supabase Cloud Database & Storage
@@ -1541,7 +2010,18 @@ function ResultScreen({
           if (active) setUploadStatus("uploading_db");
           const path = `photos/${sessionCode}_strip.png`;
           finalStripUrl = await uploadToStorage(strip, path, "image/png");
-          if (active) setQrCodeData(finalStripUrl);
+
+          // Upload raw photos taken by camera
+          if (active) setUploadStatus("uploading_raw");
+          for (let i = 0; i < photos.length; i++) {
+            try {
+              const rawUrl = await uploadToStorage(photos[i], `photos/${sessionCode}_raw_${i + 1}.jpg`, "image/jpeg");
+              rawPhotoUrls.push(rawUrl);
+            } catch (rErr) {
+              console.warn(`Raw photo ${i + 1} upload warning:`, rErr);
+              rawPhotoUrls.push(photos[i]);
+            }
+          }
 
           // Generate & upload GIF
           try {
@@ -1563,52 +2043,38 @@ function ResultScreen({
             variant,
             strip_url: finalStripUrl,
             gif_url: finalGifUrl,
+            live_photo_url: finalGifUrl || photos[0],
+            raw_photos: rawPhotoUrls,
             total_photos: photos.length,
           });
 
           dbSaved = true;
           if (active) setUploadStatus("success");
         } catch (dbErr) {
-          console.warn("Supabase upload/save warning, trying fallback:", dbErr);
+          console.warn("Supabase upload/save warning, fallback to local:", dbErr);
         }
       }
 
-      // 2. Google Drive upload (if APPS_SCRIPT_URL is provided)
-      if (APPS_SCRIPT_URL) {
-        try {
-          if (!dbSaved && active) setUploadStatus("uploading_png");
-          const descendingTimestamp = 9999999999999 - Date.now();
-          const base64Data = strip.split(",")[1];
-          await uploadFile(base64Data, `yodha-photobooth-${descendingTimestamp}.png`);
-          if (!dbSaved) {
-            setQrCodeData(DRIVE_FOLDER_URL);
-            if (active) setUploadStatus("success");
-          }
-        } catch (e) {
-          console.warn("Failed uploading to Drive:", e);
-          if (!dbSaved && active) setUploadStatus("error");
-        }
-      }
-
-      // 3. Fallback: Save session to local database cache if not connected to Supabase
-      if (!isSupabaseConfigured()) {
+      // 2. Fallback: Save session to local database cache if offline or not configured
+      if (!dbSaved) {
         const sessionDB = new SessionDB();
         await sessionDB.saveSession({
           session_code: sessionCode,
           layout,
           variant,
           strip_url: strip,
+          gif_url: finalGifUrl,
+          live_photo_url: photos[0],
+          raw_photos: photos,
           total_photos: photos.length,
         });
-        if (!APPS_SCRIPT_URL && active) {
-          setUploadStatus("demo");
-        }
+        if (active) setUploadStatus("demo");
       }
     }
 
     uploadAndPersist();
     return () => { active = false; };
-  }, [strip, photos, layout, variant]);
+  }, [strip, photos, layout, variant, sessionCode]);
 
   const download = () => {
     const a = document.createElement("a");
@@ -1825,7 +2291,7 @@ function ResultScreen({
               {qrCodeUrl ? (
                 <img
                   src={qrCodeUrl}
-                  alt="QR Code Google Drive"
+                  alt="QR Code Unduh Foto"
                   className="w-44 h-44"
                 />
               ) : (
@@ -1834,25 +2300,45 @@ function ResultScreen({
                 </div>
               )}
             </div>
-            <span className="pixel text-[10px] font-bold text-center">SCAN QR UNTUK SIMPAN FOTO</span>
+            <span className="pixel text-[10px] font-bold text-center text-[#3A2A40]">
+              SCAN QR UNTUK SIMPAN FOTO & GIF
+            </span>
+            <span className="text-[10px] font-mono text-slate-500 font-bold bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-200">
+              Sesi: {sessionCode}
+            </span>
+
             {uploadStatus === "uploading_db" && (
-              <span className="pixel text-[9px] text-blue-600 animate-pulse text-center">⏳ Mengunggah foto ke Database Cloud...</span>
+              <span className="pixel text-[9px] text-blue-600 animate-pulse text-center">⏳ Mengunggah strip foto ke Database Cloud...</span>
+            )}
+            {uploadStatus === "uploading_raw" && (
+              <span className="pixel text-[9px] text-indigo-600 animate-pulse text-center">📸 Mengunggah foto asli (raw captures)...</span>
             )}
             {uploadStatus === "generating_gif" && (
               <span className="pixel text-[9px] text-purple-600 animate-pulse text-center">🎬 Menyiapkan animasi GIF & Database...</span>
             )}
-            {uploadStatus === "uploading_png" && (
-              <span className="pixel text-[9px] text-amber-600 animate-pulse text-center">⏳ Mengunggah cadangan ke Drive...</span>
-            )}
             {uploadStatus === "success" && (
-              <span className="pixel text-[9px] text-emerald-600 text-center font-bold">✅ Foto tersimpan di Database! Scan QR untuk simpan ke HP</span>
+              <div className="flex flex-col items-center gap-1 text-center">
+                <span className="pixel text-[9px] text-emerald-600 font-bold">
+                  ✅ Foto, GIF & Foto Asli tersimpan di Database!
+                </span>
+                <span className="text-[10px] text-slate-500">Scan QR di atas dengan kamera HP</span>
+              </div>
             )}
             {uploadStatus === "error" && (
-              <span className="pixel text-[9px] text-rose-600 text-center font-bold">⚠️ Menggunakan penyimpanan lokal</span>
+              <span className="pixel text-[9px] text-rose-600 text-center font-bold">⚠️ Menggunakan penyimpanan sesi lokal</span>
             )}
             {uploadStatus === "demo" && (
               <span className="pixel text-[9px] text-slate-500 text-center">📁 Sesi tersimpan di Database Lokal</span>
             )}
+
+            <a
+              href={`?session=${sessionCode}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[10px] text-blue-600 hover:text-blue-800 underline font-semibold mt-1 inline-flex items-center gap-1 cursor-pointer"
+            >
+              <span>↗ Buka Portal Unduh di Tab Ini</span>
+            </a>
           </div>
 
           {/* Print Copies Selector */}

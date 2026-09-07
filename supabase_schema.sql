@@ -32,7 +32,7 @@ DROP POLICY IF EXISTS "Allow public delete templates" ON public.photobooth_templ
 CREATE POLICY "Allow public delete templates" ON public.photobooth_templates FOR DELETE USING (true);
 
 
--- 2. TABEL SESI HASIL FOTO (STRIP & GIF)
+-- 2. TABEL SESI HASIL FOTO (STRIP, GIF, LIVE PHOTO, DAN FOTO MENTAH)
 CREATE TABLE IF NOT EXISTS public.photobooth_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_code TEXT NOT NULL,
@@ -40,9 +40,15 @@ CREATE TABLE IF NOT EXISTS public.photobooth_sessions (
     variant TEXT DEFAULT '',
     strip_url TEXT NOT NULL,
     gif_url TEXT,
+    live_photo_url TEXT,
+    raw_photos JSONB DEFAULT '[]'::jsonb,
     total_photos INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
+
+-- Migrasi jika tabel sudah ada sebelumnya:
+ALTER TABLE public.photobooth_sessions ADD COLUMN IF NOT EXISTS live_photo_url TEXT;
+ALTER TABLE public.photobooth_sessions ADD COLUMN IF NOT EXISTS raw_photos JSONB DEFAULT '[]'::jsonb;
 
 ALTER TABLE public.photobooth_sessions ENABLE ROW LEVEL SECURITY;
 

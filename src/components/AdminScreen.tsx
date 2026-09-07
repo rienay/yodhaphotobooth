@@ -1316,27 +1316,42 @@ export function AdminScreen({
                         <p className="text-[11px] text-slate-400 mt-0.5">
                           {s.created_at ? new Date(s.created_at).toLocaleString("id-ID") : "Baru saja"}
                         </p>
+                        {s.raw_photos && s.raw_photos.length > 0 && (
+                          <span className="inline-block mt-1 text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                            📸 {s.raw_photos.length} Foto Asli (Raw)
+                          </span>
+                        )}
                       </div>
 
-                      <div className="flex gap-2 pt-2 border-t border-slate-100">
-                        <a
-                          href={s.strip_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex-1 text-center py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
-                        >
-                          Unduh Foto
-                        </a>
-                        {s.gif_url && (
+                      <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100">
+                        <div className="flex gap-2">
                           <a
-                            href={s.gif_url}
+                            href={s.strip_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="flex-1 text-center py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
+                            className="flex-1 text-center py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
                           >
-                            Unduh GIF
+                            Unduh Strip
                           </a>
-                        )}
+                          {s.gif_url && (
+                            <a
+                              href={s.gif_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex-1 text-center py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
+                            >
+                              Unduh GIF
+                            </a>
+                          )}
+                        </div>
+                        <a
+                          href={`/?session=${s.session_code}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="w-full text-center py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[11px] font-semibold transition-all border border-slate-200/80"
+                        >
+                          Buka Portal Pengunjung ↗
+                        </a>
                       </div>
                     </div>
                   ))}
