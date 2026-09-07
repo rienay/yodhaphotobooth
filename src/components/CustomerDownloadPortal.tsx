@@ -27,11 +27,14 @@ export function CustomerDownloadPortal({
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<"strip" | "gif" | "raw">("strip");
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     let active = true;
+    let pollTimer: any = null;
+
     async function fetchSession() {
-      setLoading(true);
+      if (retryCount === 0) setLoading(true);
       setError("");
       try {
         const sessionDB = new SessionDB();
@@ -39,23 +42,32 @@ export function CustomerDownloadPortal({
         if (active) {
           if (data) {
             setSession(data);
+            setLoading(false);
           } else {
-            setError(`Sesi foto "${sessionCode}" tidak ditemukan atau belum tersimpan.`);
+            // If still uploading, retry up to 6 times (every 1.5 seconds)
+            if (retryCount < 6) {
+              pollTimer = setTimeout(() => {
+                if (active) setRetryCount((prev) => prev + 1);
+              }, 1500);
+            } else {
+              setError(`Sesi foto "${sessionCode}" belum ditemukan atau belum selesai tersimpan.`);
+              setLoading(false);
+            }
           }
         }
       } catch (e: any) {
         if (active) {
           setError(e?.message || "Gagal memuat sesi foto.");
+          setLoading(false);
         }
-      } finally {
-        if (active) setLoading(false);
       }
     }
     fetchSession();
     return () => {
       active = false;
+      if (pollTimer) clearTimeout(pollTimer);
     };
-  }, [sessionCode]);
+  }, [sessionCode, retryCount]);
 
   const handleShare = () => {
     if (navigator.clipboard) {

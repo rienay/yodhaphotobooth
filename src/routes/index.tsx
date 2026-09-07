@@ -41,6 +41,13 @@ import raicab18Asset from "@/assets/raicab/18.png";
 import { CustomerDownloadPortal } from "@/components/CustomerDownloadPortal";
 
 export const Route = createFileRoute("/")({
+  validateSearch: (search: Record<string, unknown>): { session?: string; download?: string; mode?: string } => {
+    return {
+      session: typeof search.session === "string" ? search.session : undefined,
+      download: typeof search.download === "string" ? search.download : undefined,
+      mode: typeof search.mode === "string" ? search.mode : undefined,
+    };
+  },
   head: () => ({
     meta: [
       { title: "Yodha-Photobooth" },
@@ -193,8 +200,10 @@ function getDefaultTemplates(disabledIds: string[]): Template[] {
 
 /* ───────────────────────── Main Component ───────────────────────── */
 function Photobooth() {
+  const search = Route.useSearch();
   const [isAdminAuth, setIsAdminAuth] = useState<boolean>(() => isAdminAuthenticated());
   const [isBoothMode, setIsBoothMode] = useState<boolean>(() => {
+    if (search?.mode === "booth") return true;
     if (typeof window === "undefined") return false;
     const params = new URLSearchParams(window.location.search);
     return params.get("mode") === "booth";
@@ -204,10 +213,26 @@ function Photobooth() {
   const [exitError, setExitError] = useState("");
 
   const [customerSessionCode, setCustomerSessionCode] = useState<string | null>(() => {
+    if (search?.session) return search.session;
+    if (search?.download) return search.download;
     if (typeof window === "undefined") return null;
     const params = new URLSearchParams(window.location.search);
     return params.get("session") || params.get("download") || null;
   });
+
+  useEffect(() => {
+    const code = search?.session || search?.download;
+    if (code) {
+      setCustomerSessionCode(code);
+    } else if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const pCode = params.get("session") || params.get("download");
+      if (pCode) {
+        setCustomerSessionCode(pCode);
+      }
+    }
+  }, [search?.session, search?.download]);
+
   const [selectedFilter, setSelectedFilter] = useState<string>("normal");
 
   const [screen, setScreen] = useState<Screen>("home");
@@ -1119,7 +1144,7 @@ function FilterScreen({
   }, []);
 
   return (
-    <div className="w-full max-w-4xl flex flex-col items-center gap-5 sm:gap-7">
+    <div className="w-full max-w-4xl flex flex-col items-center gap-4 sm:gap-6">
       <div className="text-center space-y-1">
         <h2 className="pixel text-lg sm:text-2xl text-[var(--color-ink)]">
           PILIH FILTER KAMERA ✨
@@ -1129,8 +1154,8 @@ function FilterScreen({
         </p>
       </div>
 
-      {/* Live Viewfinder Box */}
-      <div className="relative w-full max-w-xl aspect-[4/3] rounded-2xl overflow-hidden border-4 border-[#3A2A40] bg-black shadow-[8px_8px_0_0_rgba(58,42,64,0.25)] flex items-center justify-center">
+      {/* Live Viewfinder Box - Much Larger */}
+      <div className="relative w-full max-w-3xl aspect-[4/3] max-h-[58vh] rounded-3xl overflow-hidden border-4 border-[#3A2A40] bg-black shadow-[10px_10px_0_0_rgba(58,42,64,0.25)] flex items-center justify-center">
         {!error && (
           <video
             ref={videoRef}
@@ -1153,36 +1178,43 @@ function FilterScreen({
 
         {/* Live Filter Indicator Badge */}
         <div className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white text-[11px] font-sans">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
           <span className="font-bold">{activeFilter.emoji} {activeFilter.name}</span>
         </div>
 
-        <div className="absolute bottom-4 left-4 right-4 z-20 flex items-center justify-between px-3 py-1.5 rounded-xl bg-black/60 backdrop-blur-md border border-white/20 text-white text-[11px] font-sans">
-          <span className="text-slate-300">{activeFilter.desc}</span>
+        <div className="absolute bottom-4 left-4 right-4 z-20 flex items-center justify-between px-4 py-2 rounded-2xl bg-black/60 backdrop-blur-md border border-white/20 text-white text-[11px] font-sans">
+          <span className="text-slate-200 text-xs">{activeFilter.desc}</span>
           <span className="text-[10px] text-amber-300 font-bold tracking-wider uppercase">Live View</span>
         </div>
       </div>
 
-      {/* Filter Selector Buttons */}
-      <div className="w-full max-w-xl grid grid-cols-2 sm:grid-cols-3 gap-3">
+      {/* Horizontal Circular Filters ("lingkaran memanjang") */}
+      <div className="w-full max-w-3xl flex flex-row items-center justify-center gap-3 sm:gap-6 overflow-x-auto py-2 px-2 no-scrollbar">
         {PHOTO_FILTERS.map((f) => {
           const isSelected = f.id === selectedFilter;
           return (
             <button
               key={f.id}
               onClick={() => setSelectedFilter(f.id)}
-              className={`p-3 rounded-xl flex flex-col items-center text-center transition-all cursor-pointer border-2 ${
-                isSelected
-                  ? "border-[#3A2A40] bg-[var(--color-butter)] shadow-[3px_3px_0_0_#3A2A40] -translate-y-0.5"
-                  : "border-slate-200 bg-white hover:border-slate-400 shadow-xs"
-              }`}
+              className="group flex flex-col items-center gap-1.5 focus:outline-none cursor-pointer shrink-0 transition-transform active:scale-95"
             >
-              <span className="text-2xl mb-1">{f.emoji}</span>
-              <span className="pixel text-[10px] text-[#3A2A40] font-bold leading-tight">
+              <div
+                className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center transition-all duration-200 ${
+                  isSelected
+                    ? "border-4 border-[#3A2A40] bg-[var(--color-butter)] shadow-[0_0_0_3px_#3A2A40] scale-110 -translate-y-1"
+                    : "border-2 border-slate-300 bg-white hover:border-[#3A2A40] hover:scale-105 shadow-sm"
+                }`}
+              >
+                <span className="text-2xl sm:text-3xl select-none group-hover:scale-110 transition-transform">
+                  {f.emoji}
+                </span>
+              </div>
+              <span
+                className={`pixel text-[8px] sm:text-[9px] text-center font-bold tracking-tight max-w-[85px] truncate transition-colors ${
+                  isSelected ? "text-[#3A2A40]" : "text-slate-500 group-hover:text-slate-800"
+                }`}
+              >
                 {f.name}
-              </span>
-              <span className="text-[9px] text-slate-500 font-sans mt-0.5 line-clamp-1">
-                {f.desc}
               </span>
             </button>
           );
@@ -1190,7 +1222,7 @@ function FilterScreen({
       </div>
 
       {/* Navigation Buttons */}
-      <div className="flex items-center justify-between w-full max-w-xl pt-2">
+      <div className="flex items-center justify-between w-full max-w-3xl pt-1">
         <button
           onClick={onBack}
           className="pixel-btn-powder flex items-center gap-2"
@@ -1976,8 +2008,11 @@ function ResultScreen({
 
   const printInfo = PRINT_SIZES[layout];
 
-  // ── Auto-reset countdown ──────────────────────────────────────────
+  // ── Auto-reset countdown (starts only after upload finishes) ─────────
   useEffect(() => {
+    const isReady = uploadStatus === "success" || uploadStatus === "demo" || uploadStatus === "error";
+    if (!isReady) return;
+
     setAutoResetSec(AUTO_RESET_SECONDS);
     const interval = setInterval(() => {
       setAutoResetSec(prev => {
@@ -1990,7 +2025,7 @@ function ResultScreen({
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [onHome]);
+  }, [uploadStatus, onHome]);
 
   // ── Upload to Supabase Database & Storage ───────────
   useEffect(() => {
@@ -2285,60 +2320,84 @@ function ResultScreen({
             </div>
           </div>
 
-          {/* QR Code */}
+          {/* QR Code Container */}
           <div className="pixel-box p-4 flex flex-col items-center gap-3 w-full" style={{ background: "var(--color-card)" }}>
-            <div className="pixel-box p-2 bg-white border-2 border-[#3A2A40] shadow-[3px_3px_0_0_rgba(0,0,0,0.15)] flex items-center justify-center shrink-0">
-              {qrCodeUrl ? (
-                <img
-                  src={qrCodeUrl}
-                  alt="QR Code Unduh Foto"
-                  className="w-44 h-44"
-                />
-              ) : (
-                <div className="w-44 h-44 flex items-center justify-center text-xs font-bold text-slate-400">
-                  Memuat QR...
+            {uploadStatus !== "success" && uploadStatus !== "demo" && uploadStatus !== "error" ? (
+              /* Loading State Before QR appears */
+              <div className="w-52 h-52 rounded-2xl bg-white/70 border-2 border-dashed border-[#3A2A40]/40 flex flex-col items-center justify-center p-4 text-center gap-3 shadow-inner">
+                <div className="relative flex items-center justify-center">
+                  <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                  <span className="absolute text-sm">📸</span>
                 </div>
-              )}
-            </div>
-            <span className="pixel text-[10px] font-bold text-center text-[#3A2A40]">
-              SCAN QR UNTUK SIMPAN FOTO & GIF
-            </span>
-            <span className="text-[10px] font-mono text-slate-500 font-bold bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-200">
-              Sesi: {sessionCode}
-            </span>
-
-            {uploadStatus === "uploading_db" && (
-              <span className="pixel text-[9px] text-blue-600 animate-pulse text-center">⏳ Mengunggah strip foto ke Database Cloud...</span>
-            )}
-            {uploadStatus === "uploading_raw" && (
-              <span className="pixel text-[9px] text-indigo-600 animate-pulse text-center">📸 Mengunggah foto asli (raw captures)...</span>
-            )}
-            {uploadStatus === "generating_gif" && (
-              <span className="pixel text-[9px] text-purple-600 animate-pulse text-center">🎬 Menyiapkan animasi GIF & Database...</span>
-            )}
-            {uploadStatus === "success" && (
-              <div className="flex flex-col items-center gap-1 text-center">
-                <span className="pixel text-[9px] text-emerald-600 font-bold">
-                  ✅ Foto, GIF & Foto Asli tersimpan di Database!
+                <div className="space-y-1">
+                  <span className="pixel text-[9px] text-[#3A2A40] block font-bold">
+                    MENYIMPAN FOTO...
+                  </span>
+                  <span className="text-[10px] text-slate-500 block font-sans leading-tight">
+                    {uploadStatus === "uploading_db" && "Mengunggah strip foto..."}
+                    {uploadStatus === "uploading_raw" && "Mengunggah foto mentah..."}
+                    {uploadStatus === "generating_gif" && "Menyiapkan animasi GIF..."}
+                    {uploadStatus === "idle" && "Menyiapkan penyimpanan cloud..."}
+                  </span>
+                </div>
+                <span className="pixel text-[8px] text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full border border-amber-300">
+                  QR akan muncul otomatis
                 </span>
-                <span className="text-[10px] text-slate-500">Scan QR di atas dengan kamera HP</span>
               </div>
-            )}
-            {uploadStatus === "error" && (
-              <span className="pixel text-[9px] text-rose-600 text-center font-bold">⚠️ Menggunakan penyimpanan sesi lokal</span>
-            )}
-            {uploadStatus === "demo" && (
-              <span className="pixel text-[9px] text-slate-500 text-center">📁 Sesi tersimpan di Database Lokal</span>
-            )}
+            ) : (
+              /* QR Code Appears After Upload Finishes */
+              <>
+                <div className="pixel-box p-2 bg-white border-2 border-[#3A2A40] shadow-[3px_3px_0_0_rgba(0,0,0,0.15)] flex items-center justify-center shrink-0 animate-in fade-in zoom-in duration-300">
+                  {qrCodeUrl ? (
+                    <img
+                      src={qrCodeUrl}
+                      alt="QR Code Unduh Foto"
+                      className="w-44 h-44"
+                    />
+                  ) : (
+                    <div className="w-44 h-44 flex items-center justify-center text-xs font-bold text-slate-400">
+                      Memuat QR...
+                    </div>
+                  )}
+                </div>
+                <span className="pixel text-[10px] font-bold text-center text-[#3A2A40]">
+                  SCAN QR UNTUK SIMPAN FOTO & GIF
+                </span>
+                <span className="text-[10px] font-mono text-slate-500 font-bold bg-slate-100 px-2.5 py-0.5 rounded-full border border-slate-200">
+                  Sesi: {sessionCode}
+                </span>
 
-            <a
-              href={`?session=${sessionCode}`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[10px] text-blue-600 hover:text-blue-800 underline font-semibold mt-1 inline-flex items-center gap-1 cursor-pointer"
-            >
-              <span>↗ Buka Portal Unduh di Tab Ini</span>
-            </a>
+                {uploadStatus === "success" && (
+                  <div className="flex flex-col items-center gap-1 text-center">
+                    <span className="pixel text-[9px] text-emerald-600 font-bold">
+                      ✅ Foto, GIF & Foto Asli tersimpan!
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-sans">
+                      Scan QR di atas dengan kamera HP Anda
+                    </span>
+                  </div>
+                )}
+                {uploadStatus === "error" && (
+                  <span className="pixel text-[9px] text-rose-600 text-center font-bold">
+                    ⚠️ Menggunakan penyimpanan sesi lokal
+                  </span>
+                )}
+                {uploadStatus === "demo" && (
+                  <span className="pixel text-[9px] text-slate-500 text-center">
+                    📁 Sesi tersimpan di Database Lokal
+                  </span>
+                )}
+
+                <a
+                  href={`?session=${sessionCode}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-blue-600 hover:text-blue-800 underline font-semibold mt-0.5 inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <span>↗ Buka Portal Unduh di Tab Ini</span>
+                </a>
+              </>
+            )}
           </div>
 
           {/* Print Copies Selector */}
