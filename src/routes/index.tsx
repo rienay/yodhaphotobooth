@@ -4,7 +4,7 @@ import QRCode from "qrcode";
 import { AdminScreen, Template } from "@/components/AdminScreen";
 import { AdminLogin } from "@/components/AdminLogin";
 import { TemplateDB, CustomTemplate, SessionDB, SettingsDB } from "@/lib/db";
-import { isSupabaseConfigured, uploadToStorage } from "@/lib/supabase";
+import { isSupabaseConfigured, uploadToStorage, getSupabaseAnonKey, getSupabaseUrl } from "@/lib/supabase";
 import {
   isAdminAuthenticated,
   isBoothAccessAllowed,
@@ -354,18 +354,9 @@ function Photobooth() {
   };
 
   // ────────────────── MODE 0: CUSTOMER DOWNLOAD PORTAL (QR CODE SCAN) ──────────────────
+  // Dedicated customer page: 100% isolated, NO access to booth kiosk or admin dashboard
   if (customerSessionCode) {
-    return (
-      <CustomerDownloadPortal
-        sessionCode={customerSessionCode}
-        onBackToBooth={() => {
-          setCustomerSessionCode(null);
-          if (typeof window !== "undefined") {
-            window.history.replaceState(null, "", window.location.pathname);
-          }
-        }}
-      />
-    );
+    return <CustomerDownloadPortal sessionCode={customerSessionCode} />;
   }
 
   // ──────────────────────── MODE 1: ADMIN AREA ────────────────────────
@@ -1946,10 +1937,12 @@ function ResultScreen({
   const [autoResetSec, setAutoResetSec] = useState(AUTO_RESET_SECONDS);
   const [printCopies, setPrintCopies] = useState(1);
 
-  // Customer download portal URL
+  // Customer download portal URL (passes key if configured so customer HP connects seamlessly)
+  const currentAnonKey = getSupabaseAnonKey();
+  const keyQueryParam = currentAnonKey ? `&k=${encodeURIComponent(currentAnonKey)}` : "";
   const portalUrl = typeof window !== "undefined"
-    ? `${window.location.origin}${window.location.pathname}?session=${sessionCode}`
-    : `https://yodhaphotobooth.app/?session=${sessionCode}`;
+    ? `${window.location.origin}${window.location.pathname}?session=${sessionCode}${keyQueryParam}`
+    : `https://yodhaphotobooth.vercel.app/?session=${sessionCode}${keyQueryParam}`;
   const [qrCodeData, setQrCodeData] = useState(portalUrl);
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
 
@@ -2383,18 +2376,23 @@ function ResultScreen({
                   </span>
                 )}
                 {uploadStatus === "demo" && (
-                  <span className="pixel text-[9px] text-slate-500 text-center">
-                    📁 Sesi tersimpan di Database Lokal
-                  </span>
+                  <div className="w-full bg-amber-50 border border-amber-300 rounded-xl p-2 text-center text-amber-900 space-y-1 mt-1">
+                    <span className="pixel text-[9px] text-amber-700 block font-bold">
+                      ⚠️ Supabase Belum Terhubung
+                    </span>
+                    <span className="text-[10px] text-amber-800 block font-sans leading-tight">
+                      Foto tersimpan di laptop ini. Masukkan Supabase Anon Key di Dashboard Admin agar foto dapat di-scan dari HP.
+                    </span>
+                  </div>
                 )}
 
                 <a
-                  href={`?session=${sessionCode}`}
+                  href={portalUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="text-[10px] text-blue-600 hover:text-blue-800 underline font-semibold mt-0.5 inline-flex items-center gap-1 cursor-pointer"
                 >
-                  <span>↗ Buka Portal Unduh di Tab Ini</span>
+                  <span>↗ Buka Portal Unduh di Tab Baru</span>
                 </a>
               </>
             )}

@@ -15,12 +15,10 @@ import yodhaLogo from "@/assets/yodha.png";
 
 interface CustomerDownloadPortalProps {
   sessionCode: string;
-  onBackToBooth?: () => void;
 }
 
 export function CustomerDownloadPortal({
   sessionCode,
-  onBackToBooth,
 }: CustomerDownloadPortalProps) {
   const [session, setSession] = useState<PhotoboothSession | null>(null);
   const [loading, setLoading] = useState(true);
@@ -32,6 +30,21 @@ export function CustomerDownloadPortal({
   useEffect(() => {
     let active = true;
     let pollTimer: any = null;
+
+    // Read Supabase key passed via QR Code URL if any
+    if (typeof window !== "undefined") {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const k = urlParams.get("k");
+        if (k && k.trim()) {
+          localStorage.setItem("yodha_supabase_anon_key", k.trim());
+        }
+        const u = urlParams.get("u");
+        if (u && u.trim()) {
+          localStorage.setItem("yodha_supabase_url", u.trim());
+        }
+      } catch {}
+    }
 
     async function fetchSession() {
       if (retryCount === 0) setLoading(true);
@@ -127,14 +140,12 @@ export function CustomerDownloadPortal({
         <p className="text-xs text-slate-400 mt-2 max-w-sm">
           Pastikan kode sesi foto sudah benar atau coba segarkan kembali halaman ini.
         </p>
-        {onBackToBooth && (
-          <button
-            onClick={onBackToBooth}
-            className="mt-6 px-5 py-2.5 rounded-xl bg-slate-800 text-slate-200 text-xs font-semibold hover:bg-slate-700 transition-colors"
-          >
-            Kembali ke Booth
-          </button>
-        )}
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-6 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors cursor-pointer"
+        >
+          🔄 Muat Ulang Halaman
+        </button>
       </div>
     );
   }

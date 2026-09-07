@@ -1,31 +1,88 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-// Read environment variables from Vite (supports both VITE_ and standard prefix)
-const supabaseUrl =
-  import.meta.env.VITE_SUPABASE_URL ||
-  import.meta.env.SUPABASE_URL ||
-  "https://jsbyuegfpbqnaasaqhto.supabase.co";
+export function getSupabaseUrl(): string {
+  if (typeof window !== "undefined") {
+    const saved = localStorage.getItem("yodha_supabase_url");
+    if (saved && saved.trim()) return saved.trim();
+  }
+  return (
+    import.meta.env.VITE_SUPABASE_URL ||
+    import.meta.env.SUPABASE_URL ||
+    "https://jsbyuegfpbqnaasaqhto.supabase.co"
+  );
+}
 
-const supabaseAnonKey =
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  import.meta.env.SUPABASE_ANON_KEY ||
-  "";
+export function getSupabaseAnonKey(): string {
+  if (typeof window !== "undefined") {
+    const saved = localStorage.getItem("yodha_supabase_anon_key");
+    if (saved && saved.trim()) return saved.trim();
+  }
+  return (
+    import.meta.env.VITE_SUPABASE_ANON_KEY ||
+    import.meta.env.SUPABASE_ANON_KEY ||
+    ""
+  );
+}
+
+export function saveSupabaseCredentials(url: string, anonKey: string): void {
+  if (typeof window !== "undefined") {
+    if (url && url.trim()) {
+      localStorage.setItem("yodha_supabase_url", url.trim());
+    } else {
+      localStorage.removeItem("yodha_supabase_url");
+    }
+    if (anonKey && anonKey.trim()) {
+      localStorage.setItem("yodha_supabase_anon_key", anonKey.trim());
+    } else {
+      localStorage.removeItem("yodha_supabase_anon_key");
+    }
+    cachedClient = null;
+    lastKey = "";
+    lastUrl = "";
+  }
+}
 
 export const isSupabaseConfigured = (): boolean => {
+  const url = getSupabaseUrl();
+  const key = getSupabaseAnonKey();
   return (
-    typeof supabaseUrl === "string" &&
-    supabaseUrl.trim().length > 0 &&
-    !supabaseUrl.includes("your-project-ref") &&
-    typeof supabaseAnonKey === "string" &&
-    supabaseAnonKey.trim().length > 0 &&
-    !supabaseAnonKey.includes("your-anon-key")
+    typeof url === "string" &&
+    url.trim().length > 0 &&
+    !url.includes("your-project-ref") &&
+    typeof key === "string" &&
+    key.trim().length > 0 &&
+    !key.includes("your-anon-key")
   );
 };
 
-// Create client if configured, otherwise null
-export const supabase: SupabaseClient | null = isSupabaseConfigured()
-  ? createClient(supabaseUrl, supabaseAnonKey)
-  : null;
+let cachedClient: SupabaseClient | null = null;
+let lastKey = "";
+let lastUrl = "";
+
+export function getSupabaseClient(): SupabaseClient | null {
+  if (!isSupabaseConfigured()) return null;
+  const url = getSupabaseUrl();
+  const key = getSupabaseAnonKey();
+  if (!cachedClient || key !== lastKey || url !== lastUrl) {
+    cachedClient = createClient(url, key);
+    lastKey = key;
+    lastUrl = url;
+  }
+  return cachedClient;
+}
+
+// Proxy wrapper so any direct supabase.* access dynamically resolves to current client
+export const supabase: SupabaseClient | null = new Proxy({} as any, {
+  get(_target, prop) {
+    const client = getSupabaseClient();
+    if (!client) return undefined;
+    const val = (client as any)[prop];
+    if (typeof val === "function") {
+      return val.bind(client);
+    }
+    return val;
+  },
+});
 
 /**
  * Convert base64 data URL to Blob for upload
@@ -64,14 +121,15 @@ export async function uploadToStorage(
   filePath: string,
   contentType = "image/png"
 ): Promise<string> {
-  if (!supabase) {
-    throw new Error("Supabase is not configured.");
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error("Supabase is not configured. Masukkan Anon Key di Dashboard Admin.");
   }
 
   const blob = typeof fileData === "string" ? base64ToBlob(fileData, contentType) : fileData;
   const bucketName = "photobooth";
 
-  const { error: uploadError } = await supabase.storage
+  const { error: uploadError } = await client.storage
     .from(bucketName)
     .upload(filePath, blob, {
       contentType,
@@ -83,7 +141,7 @@ export async function uploadToStorage(
     throw uploadError;
   }
 
-  const { data } = supabase.storage.from(bucketName).getPublicUrl(filePath);
+  const { data } = client.storage.from(bucketName).getPublicUrl(filePath);
   return data.publicUrl;
 }
 
@@ -91,15 +149,16 @@ export async function uploadToStorage(
  * Test Supabase connection
  */
 export async function testSupabaseConnection(): Promise<{ success: boolean; message: string }> {
-  if (!isSupabaseConfigured() || !supabase) {
+  const client = getSupabaseClient();
+  if (!isSupabaseConfigured() || !client) {
     return {
       success: false,
-      message: "Supabase URL atau Anon Key belum diisi di environment variables.",
+      message: "Supabase URL atau Anon Key belum diisi. Masukkan Anon Key di form di bawah ini.",
     };
   }
 
   try {
-    const { error } = await supabase.from("photobooth_templates").select("id").limit(1);
+    const { error } = await client.from("photobooth_templates").select("id").limit(1);
     if (error) {
       // Check if table missing
       if (error.code === "42P01") {

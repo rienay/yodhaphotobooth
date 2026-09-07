@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import yodhaLogo from "@/assets/yodha.png";
 import { CustomTemplate, SessionDB, PhotoboothSession, SettingsDB } from "../lib/db";
-import { isSupabaseConfigured, testSupabaseConnection } from "../lib/supabase";
+import { isSupabaseConfigured, testSupabaseConnection, getSupabaseUrl, getSupabaseAnonKey, saveSupabaseCredentials } from "../lib/supabase";
 import { logoutAdmin, getAdminPin, setAdminPin, createBoothSession } from "../lib/auth";
 import {
   LayoutDashboard,
@@ -175,6 +175,12 @@ export function AdminScreen({
   const [newPinInput, setNewPinInput] = useState("");
   const [pinChangeMsg, setPinChangeMsg] = useState("");
 
+  // Supabase Credentials Form State
+  const [supabaseUrlInput, setSupabaseUrlInput] = useState(getSupabaseUrl());
+  const [supabaseAnonKeyInput, setSupabaseAnonKeyInput] = useState(getSupabaseAnonKey());
+  const [supabaseSavedMsg, setSupabaseSavedMsg] = useState("");
+  const [showAnonKey, setShowAnonKey] = useState(false);
+
   // Load initial data
   useEffect(() => {
     // Media devices
@@ -259,6 +265,16 @@ export function AdminScreen({
     const res = await testSupabaseConnection();
     setDbTestResult({ testing: false, message: res.message, success: res.success });
     setDbConfigured(isSupabaseConfigured());
+  };
+
+  const handleSaveSupabaseConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    saveSupabaseCredentials(supabaseUrlInput.trim(), supabaseAnonKeyInput.trim());
+    const configured = isSupabaseConfigured();
+    setDbConfigured(configured);
+    setSupabaseSavedMsg("✅ Kredensial Supabase berhasil disimpan!");
+    setTimeout(() => setSupabaseSavedMsg(""), 4000);
+    handleTestDB();
   };
 
   const handleSavePin = async (e: React.FormEvent) => {
@@ -1457,6 +1473,7 @@ export function AdminScreen({
           {/* ──────────────── TAB 6: DATABASE CLOUD ──────────────── */}
           {activeNav === "database" && (
             <div className="max-w-2xl mx-auto space-y-6">
+              {/* Status Card */}
               <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-6 space-y-5">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1480,12 +1497,12 @@ export function AdminScreen({
                   {dbConfigured ? <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" /> : <AlertTriangle className="w-6 h-6 text-amber-600 shrink-0" />}
                   <div>
                     <p className="text-xs font-bold">
-                      {dbConfigured ? "Terhubung ke Supabase Cloud" : "Mode Offline / Local Fallback"}
+                      {dbConfigured ? "Terhubung ke Supabase Cloud" : "Mode Offline / Supabase Belum Aktif"}
                     </p>
                     <p className="text-[11px] text-slate-600 mt-0.5">
                       {dbConfigured
-                        ? "Seluruh data dan gambar tersimpan otomatis di PostgreSQL & Storage Bucket."
-                        : "Kunci Supabase belum disetel di Vercel. Data disimpan sementara di IndexedDB lokal."}
+                        ? "Foto strip, animasi GIF, dan foto asli tersimpan di Supabase Cloud & Storage photobooth."
+                        : "Supabase Anon Key belum diisi. Foto hanya tersimpan di perangkat booth ini dan belum dapat dibuka di HP pengunjung."}
                     </p>
                   </div>
                 </div>
@@ -1497,6 +1514,114 @@ export function AdminScreen({
                     {dbTestResult.message}
                   </div>
                 )}
+              </div>
+
+              {/* Configuration Form Card */}
+              <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-6 space-y-4">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Kredensial Supabase Cloud</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Masukkan URL dan Anon Public Key dari proyek Supabase Anda. Kunci ini otomatis tersimpan dan disertakan dalam QR Code agar pengunjung HP dapat langsung mengunduh fotonya.
+                  </p>
+                </div>
+
+                <form onSubmit={handleSaveSupabaseConfig} className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-slate-700">
+                      Supabase Project URL
+                    </label>
+                    <input
+                      type="url"
+                      value={supabaseUrlInput}
+                      onChange={(e) => setSupabaseUrlInput(e.target.value)}
+                      placeholder="https://your-project-ref.supabase.co"
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono bg-slate-50/50"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-semibold text-slate-700">
+                        Supabase Anon Key (Public Key)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowAnonKey((prev) => !prev)}
+                        className="text-[11px] text-blue-600 hover:underline cursor-pointer"
+                      >
+                        {showAnonKey ? "Sembunyikan" : "Tampilkan"}
+                      </button>
+                    </div>
+                    <textarea
+                      value={supabaseAnonKeyInput}
+                      onChange={(e) => setSupabaseAnonKeyInput(e.target.value)}
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      rows={showAnonKey ? 4 : 2}
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono bg-slate-50/50 resize-none break-all"
+                      required
+                    />
+                    <p className="text-[10px] text-slate-400">
+                      Anon key adalah kunci publik aman yang digunakan klien/HP untuk membaca hasil foto sesi mereka.
+                    </p>
+                  </div>
+
+                  {supabaseSavedMsg && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold rounded-xl">
+                      {supabaseSavedMsg}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+                    >
+                      Simpan & Hubungkan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleTestDB}
+                      disabled={dbTestResult.testing}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+                    >
+                      {dbTestResult.testing ? "Menguji..." : "Uji Koneksi"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Instructions Guide Card */}
+              <div className="bg-slate-50 rounded-2xl border border-slate-200 p-5 space-y-3">
+                <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <span>💡</span>
+                  <span>Cara Mengambil Anon Key dari Supabase Dashboard</span>
+                </h4>
+                <ol className="text-xs text-slate-600 space-y-2 list-decimal list-inside leading-relaxed">
+                  <li>
+                    Buka project Supabase Anda di{" "}
+                    <a
+                      href="https://supabase.com/dashboard"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-600 underline font-semibold"
+                    >
+                      supabase.com/dashboard
+                    </a>
+                  </li>
+                  <li>
+                    Masuk ke menu <strong>Project Settings</strong> (ikon gerigi di sidebar kiri bawah) &gt; pilih tab <strong>API</strong>.
+                  </li>
+                  <li>
+                    Di bagian <strong>Project API keys</strong>, cari baris <strong>anon public</strong> lalu klik <strong>Copy</strong>.
+                  </li>
+                  <li>
+                    Tempelkan kuncinya ke kolom <strong>Supabase Anon Key</strong> di atas lalu klik <strong>Simpan & Hubungkan</strong>.
+                  </li>
+                  <li>
+                    Pastikan tabel database sudah terbuat dengan mengeksekusi kode dari file <code className="bg-slate-200 px-1 py-0.5 rounded text-[11px]">supabase_schema.sql</code> pada menu <strong>SQL Editor</strong> Supabase.
+                  </li>
+                </ol>
               </div>
             </div>
           )}
