@@ -16,13 +16,13 @@ import {
   RotateCcw,
 } from "lucide-react";
 import yodhaLogo from "@/assets/yodha.png";
-import { generateGifFromPhotos } from "@/lib/gif";
 import {
   detectHolesFromImage,
   loadImg,
   composeLiveVideoFrame,
   composeLiveGifFrame,
   generate12sGifFromVideo,
+  convertBlobToMp4,
 } from "@/lib/frameLive";
 
 interface CustomerDownloadPortalProps {
@@ -181,15 +181,73 @@ export function CustomerDownloadPortal({
     }
   };
 
-  const triggerDownload = (url: string, filename: string) => {
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
+    a.href = blobUrl;
     a.download = filename;
-    a.target = "_blank";
-    a.rel = "noreferrer";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 45000);
+  };
+
+  const triggerDownload = async (url: string, filename: string) => {
+    try {
+      if (url.startsWith("blob:")) {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return;
+      }
+
+      if (url.startsWith("data:")) {
+        const res = await fetch(url);
+        const blob = await res.blob();
+        downloadBlob(blob, filename);
+        return;
+      }
+
+      // Supabase or external storage: fetch as Blob first so mobile browsers honor download attribute
+      const res = await fetch(url);
+      let blob = await res.blob();
+
+      // If downloading an MP4 video, check if it's already a valid MP4 container (has 'ftyp' box)
+      // If it's WebM (e.g. from an older session recorded before today), convert it to genuine H.264 MP4
+      if (filename.endsWith(".mp4")) {
+        const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+        const isAlreadyMp4 =
+          head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70;
+        const isWebm =
+          head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3;
+
+        if (isWebm || !isAlreadyMp4) {
+          try {
+            const converted = await convertBlobToMp4(blob);
+            if (converted && converted.size > 0) {
+              blob = converted;
+            }
+          } catch (convErr) {
+            console.warn("Client-side MP4 conversion fallback:", convErr);
+          }
+        }
+      }
+
+      downloadBlob(blob, filename);
+    } catch (e) {
+      console.warn("Fetch blob download failed, falling back to direct anchor:", e);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.target = "_blank";
+      a.rel = "noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
   };
 
   const handleDownloadAll = () => {
@@ -673,7 +731,7 @@ function FramedLiveView({
   triggerDownload,
 }: {
   session: PhotoboothSession;
-  triggerDownload: (url: string, filename: string) => void;
+  triggerDownload: (url: string, filename: string) => Promise<void> | void;
 }) {
   const liveVideos = session.live_videos || [];
   const [holes, setHoles] = useState<{ left: number; top: number; width: number; height: number }[]>([]);
@@ -785,7 +843,7 @@ function FramedLiveView({
         4 // 3s x 4 repeats = 12 seconds!
       );
       if (gifDataUrl) {
-        triggerDownload(gifDataUrl, `${session.session_code}_live_12s_loop.gif`);
+        await triggerDownload(gifDataUrl, `${session.session_code}_live_12s_loop.gif`);
       } else {
         alert("Gagal merender GIF berbingkai di browser ini.");
       }
@@ -805,7 +863,7 @@ function FramedLiveView({
     try {
       const gifDataUrl = await generate12sGifFromVideo(vUrl, 440, 8, 4);
       if (gifDataUrl) {
-        triggerDownload(gifDataUrl, `${session.session_code}_pose_${idx + 1}_12s.gif`);
+        await triggerDownload(gifDataUrl, `${session.session_code}_pose_${idx + 1}_12s.gif`);
       }
     } catch (e: any) {
       console.error(e);
@@ -816,22 +874,23 @@ function FramedLiveView({
   };
 
   const handleDownloadFramedVideo = async () => {
-    if (
-      session.live_photo_url &&
-      (session.live_photo_url.includes(".webm") || session.live_photo_url.includes(".mp4"))
-    ) {
-      triggerDownload(session.live_photo_url, `${session.session_code}_live_framed.mp4`);
-      return;
-    }
-
     if (isComposing) return;
     setIsComposing(true);
-    setDownloadProgress("Merender video frame live MP4 HD...");
+    setDownloadProgress("Menyiapkan video MP4 HD...");
     try {
+      if (
+        session.live_photo_url &&
+        (session.live_photo_url.includes(".webm") || session.live_photo_url.includes(".mp4"))
+      ) {
+        await triggerDownload(session.live_photo_url, `${session.session_code}_live_framed.mp4`);
+        return;
+      }
+
+      setDownloadProgress("Merender video frame live MP4 HD...");
       const targetTemplate = session.template_url || session.strip_url;
       const compositeUrl = await composeLiveVideoFrame(targetTemplate, liveVideos, session.layout || "4x2");
       if (compositeUrl) {
-        triggerDownload(compositeUrl, `${session.session_code}_live_framed.mp4`);
+        await triggerDownload(compositeUrl, `${session.session_code}_live_framed.mp4`);
       } else {
         alert("Gagal merender video frame live di browser ini.");
       }

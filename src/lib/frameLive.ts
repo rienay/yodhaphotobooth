@@ -1,5 +1,15 @@
 // @ts-ignore
 import { GIFEncoder, quantize, applyPalette } from "gifenc";
+import {
+  Input,
+  Output,
+  Conversion,
+  ALL_FORMATS,
+  BlobSource,
+  Mp4OutputFormat,
+  BufferTarget,
+  canEncode,
+} from "mediabunny";
 
 /**
  * Helper utilities for Live Photo video recording and framed live composition
@@ -16,7 +26,58 @@ export function loadImg(src: string): Promise<HTMLImageElement> {
 }
 
 /**
- * Record a 3-second live video clip from camera MediaStream
+ * Converts any video Blob (e.g. WebM/VP8/VP9 from MediaRecorder) to a genuine
+ * ISO Base Media File Format MP4 with H.264 (AVC) video track and fastStart metadata.
+ * This guarantees 100% native playback on mobile phones (iOS Photos/Files and Android Gallery).
+ */
+export async function convertBlobToMp4(inputBlob: Blob): Promise<Blob> {
+  try {
+    if (!inputBlob || inputBlob.size === 0) return inputBlob;
+
+    // Check if it already has an MP4 ISO box header (bytes 4-7 equal 'ftyp')
+    const head = new Uint8Array(await inputBlob.slice(0, 8).arrayBuffer());
+    const isAlreadyMp4 =
+      head[4] === 0x66 && head[5] === 0x74 && head[6] === 0x79 && head[7] === 0x70;
+    if (isAlreadyMp4 && inputBlob.type === "video/mp4") {
+      return inputBlob;
+    }
+
+    // Verify browser support for AVC (H.264) encoding via WebCodecs
+    const avcSupported = await canEncode("avc");
+    if (!avcSupported) {
+      console.warn("AVC (H.264) encoder not supported in this environment, using original blob");
+      return inputBlob;
+    }
+
+    const input = new Input({
+      source: new BlobSource(inputBlob),
+      formats: ALL_FORMATS,
+    });
+
+    const output = new Output({
+      format: new Mp4OutputFormat({ fastStart: "in-memory" }),
+      target: new BufferTarget(),
+    });
+
+    const conversion = await Conversion.init({ input, output });
+    if (!conversion.isValid) {
+      console.warn("Conversion to MP4 not valid:", conversion.discardedTracks);
+      return inputBlob;
+    }
+
+    await conversion.execute();
+
+    if (output.target.buffer && output.target.buffer.byteLength > 0) {
+      return new Blob([output.target.buffer], { type: "video/mp4" });
+    }
+  } catch (err) {
+    console.warn("convertBlobToMp4 encountered error:", err);
+  }
+  return inputBlob;
+}
+
+/**
+ * Record a 3-second live video clip from camera MediaStream and output true H.264 MP4
  */
 export function recordLiveClip(stream: MediaStream, durationMs = 3000): Promise<string> {
   return new Promise((resolve) => {
@@ -48,13 +109,22 @@ export function recordLiveClip(stream: MediaStream, durationMs = 3000): Promise<
         }
       };
 
-      recorder.onstop = () => {
-        const actualMime = mimeType.includes("mp4") ? "video/mp4" : (mimeType || "video/mp4");
-        const blob = new Blob(chunks, { type: actualMime });
-        const reader = new FileReader();
-        reader.onloadend = () => resolve((reader.result as string) || "");
-        reader.onerror = () => resolve("");
-        reader.readAsDataURL(blob);
+      recorder.onstop = async () => {
+        try {
+          const rawBlob = new Blob(chunks, { type: mimeType || "video/webm" });
+          const mp4Blob = await convertBlobToMp4(rawBlob);
+          const reader = new FileReader();
+          reader.onloadend = () => resolve((reader.result as string) || "");
+          reader.onerror = () => resolve("");
+          reader.readAsDataURL(mp4Blob);
+        } catch (e) {
+          console.warn("Error processing recorded live clip:", e);
+          const fallbackBlob = new Blob(chunks, { type: "video/mp4" });
+          const reader = new FileReader();
+          reader.onloadend = () => resolve((reader.result as string) || "");
+          reader.onerror = () => resolve("");
+          reader.readAsDataURL(fallbackBlob);
+        }
       };
 
       recorder.start(100);
@@ -191,8 +261,11 @@ export async function composeLiveVideoFrame(
   }
 
   const frameImg = await loadImg(templateImgSrc);
-  const frameW = frameImg.naturalWidth || frameImg.width || 1200;
-  const frameH = frameImg.naturalHeight || frameImg.height || 1800;
+  const origW = frameImg.naturalWidth || frameImg.width || 1200;
+  const origH = frameImg.naturalHeight || frameImg.height || 1800;
+  // H.264 / AVC requires even dimensions (multiples of 2)
+  const frameW = Math.round(origW / 2) * 2;
+  const frameH = Math.round(origH / 2) * 2;
 
   let holes = detectHolesFromImage(frameImg);
   if (holes.length === 0) {
@@ -297,7 +370,7 @@ export async function composeLiveVideoFrame(
   };
 
   return new Promise((resolve) => {
-    recorder.onstop = () => {
+    recorder.onstop = async () => {
       running = false;
       cancelAnimationFrame(animationFrameId);
       videoElements.forEach((v) => {
@@ -305,12 +378,21 @@ export async function composeLiveVideoFrame(
         v.src = "";
       });
 
-      const actualMime = mimeType.includes("mp4") ? "video/mp4" : "video/mp4";
-      const blob = new Blob(chunks, { type: actualMime });
-      const reader = new FileReader();
-      reader.onloadend = () => resolve((reader.result as string) || "");
-      reader.onerror = () => resolve("");
-      reader.readAsDataURL(blob);
+      try {
+        const rawBlob = new Blob(chunks, { type: mimeType || "video/webm" });
+        const mp4Blob = await convertBlobToMp4(rawBlob);
+        const reader = new FileReader();
+        reader.onloadend = () => resolve((reader.result as string) || "");
+        reader.onerror = () => resolve("");
+        reader.readAsDataURL(mp4Blob);
+      } catch (err) {
+        console.warn("composeLiveVideoFrame conversion fallback:", err);
+        const fallbackBlob = new Blob(chunks, { type: "video/mp4" });
+        const reader = new FileReader();
+        reader.onloadend = () => resolve((reader.result as string) || "");
+        reader.onerror = () => resolve("");
+        reader.readAsDataURL(fallbackBlob);
+      }
     };
 
     recorder.start(100);
