@@ -1987,7 +1987,8 @@ function detectHolesFromImage(frameImg: HTMLImageElement): { x: number; y: numbe
 
         const w = maxX - minX + 1;
         const h = maxY - minY + 1;
-        if (w >= width * 0.3 && w < width * 0.98 && h >= height * 0.05) {
+        const area = w * h;
+        if (w >= width * 0.10 && h >= height * 0.04 && area >= (width * height) * 0.012 && w < width * 0.98 && h < height * 0.98) {
           // Scale back up to original resolution
           holes.push({
             x: Math.round(minX / scale),

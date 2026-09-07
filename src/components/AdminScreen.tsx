@@ -31,6 +31,8 @@ import {
   Wand2,
   Eye,
   Layers,
+  Undo,
+  RotateCcw,
 } from "lucide-react";
 
 export interface Template {
@@ -58,16 +60,21 @@ interface AdminScreenProps {
 }
 
 const LAYOUT_LABELS: Record<string, string> = {
-  "3x1": "Strip Vertikal (3x1)",
-  "3x2": "Grid 6 Foto (3x2)",
-  "2x2": "Grid 2x2 (2x2)",
-  "2x1": "Strip Pendek (2x1)",
+  "2x2": "Grid 4 Foto (2x2 / Custom 4 Lubang)",
+  "3x1": "Strip Vertikal (3x1 / 3 Foto)",
+  "3x2": "Grid 6 Foto (3x2 / 6 Foto)",
+  "2x1": "Strip Pendek (2x1 / 2 Foto)",
   "1x1": "Foto Tunggal (1x1)",
-  "4x2": "Grid 8 Foto (4x2)",
+  "4x2": "Grid 8 Foto (4x2 / 8 Foto)",
 };
 
 const HOLE_PRESETS: Record<string, { id: string; label: string }[]> = {
+  "2x2": [
+    { id: "auto", label: "✨ Otomatis Sesuai Lubang Bingkai (Auto-Detect)" },
+    { id: "default", label: "Default (Full Overlap)" },
+  ],
   "3x1": [
+    { id: "auto", label: "✨ Otomatis Sesuai Lubang Bingkai (Auto-Detect)" },
     { id: "frame1", label: "Pink (Preset 1)" },
     { id: "frame2", label: "Biru (Preset 2)" },
     { id: "frame3", label: "Frame 1 (Preset 3)" },
@@ -75,6 +82,7 @@ const HOLE_PRESETS: Record<string, { id: string; label: string }[]> = {
     { id: "frame5", label: "Frame 3 (Preset 5)" },
   ],
   "2x1": [
+    { id: "auto", label: "✨ Otomatis Sesuai Lubang Bingkai (Auto-Detect)" },
     { id: "frame1", label: "Frame 1 (Preset 1)" },
     { id: "frame2", label: "Frame 2 (Preset 2)" },
     { id: "frame3", label: "Frame 3 (Preset 3)" },
@@ -83,6 +91,7 @@ const HOLE_PRESETS: Record<string, { id: string; label: string }[]> = {
     { id: "frame6", label: "Frame 6 (Preset 6)" },
   ],
   "3x2": [
+    { id: "auto", label: "✨ Otomatis Sesuai Lubang Bingkai (Auto-Detect)" },
     { id: "default", label: "Default (Preset 1)" },
     { id: "frame2", label: "Frame 2 (Preset 2)" },
     { id: "frame3", label: "Frame 3 (Preset 3)" },
@@ -93,9 +102,14 @@ const HOLE_PRESETS: Record<string, { id: string; label: string }[]> = {
     { id: "frame8", label: "Frame 8 (Preset 8)" },
     { id: "frame9", label: "Frame 9 (Preset 9)" },
   ],
-  "1x1": [{ id: "default", label: "Default (Full Overlap)" }],
-  "2x2": [{ id: "default", label: "Default (Full Overlap)" }],
-  "4x2": [{ id: "default", label: "Default (Full Overlap)" }],
+  "1x1": [
+    { id: "auto", label: "✨ Otomatis Sesuai Lubang Bingkai (Auto-Detect)" },
+    { id: "default", label: "Default (Full Overlap)" },
+  ],
+  "4x2": [
+    { id: "auto", label: "✨ Otomatis Sesuai Lubang Bingkai (Auto-Detect)" },
+    { id: "default", label: "Default (Full Overlap)" },
+  ],
 };
 
 const settingsDB = new SettingsDB();
@@ -124,17 +138,19 @@ export function AdminScreen({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Chroma Key / Auto Background Remover state
+  // Frame Editor & Chroma Key / Magic Wand state
   const [rawBase64Img, setRawBase64Img] = useState("");
-  const [enableChromaKey, setEnableChromaKey] = useState(false);
-  const [chromaColor, setChromaColor] = useState("#00FF00"); // default bright green
-  const [chromaTolerance, setChromaTolerance] = useState(30); // 1 - 80%
-  const [chromaFeather, setChromaFeather] = useState(8); // 0 - 20%
-  const [isProcessingChroma, setIsProcessingChroma] = useState(false);
+  const [activeCanvasData, setActiveCanvasData] = useState("");
+  const [historyStack, setHistoryStack] = useState<string[]>([]);
+  const [chromaTolerance, setChromaTolerance] = useState(25); // 5 - 70%
+  const [chromaColor, setChromaColor] = useState("#FFFFFF");
+  const [toolMode, setToolMode] = useState<"wand" | "global">("wand");
   const [previewTab, setPreviewTab] = useState<"checkerboard" | "photos">("checkerboard");
-  const [isEyedropperActive, setIsEyedropperActive] = useState(false);
-  const [imageMeta, setImageMeta] = useState<{ width: number; height: number; isAutoGreen?: boolean } | null>(null);
+  const [detectedHoles, setDetectedHoles] = useState<{ x: number; y: number; w: number; h: number }[]>([]);
+  const [imageMeta, setImageMeta] = useState<{ width: number; height: number } | null>(null);
+  const [actionStatus, setActionStatus] = useState("");
   const originalImageRef = useRef<HTMLImageElement | null>(null);
+  const workingCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const previewImgRef = useRef<HTMLImageElement | null>(null);
 
   // Device & Camera settings
@@ -276,7 +292,7 @@ export function AdminScreen({
       clean = clean.split("").map((c) => c + c).join("");
     }
     const num = parseInt(clean, 16);
-    if (isNaN(num)) return { r: 0, g: 255, b: 0 };
+    if (isNaN(num)) return { r: 255, g: 255, b: 255 };
     return {
       r: (num >> 16) & 255,
       g: (num >> 8) & 255,
@@ -290,69 +306,246 @@ export function AdminScreen({
       Math.max(0, Math.min(255, Math.round(n)))
         .toString(16)
         .padStart(2, "0");
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
   };
 
-  // Helper: Detect if image contains green screen background
-  const detectIfGreenOrSolid = (img: HTMLImageElement): { isGreen: boolean; suggestedColor: string } => {
+  // Hole detection from working canvas
+  const detectHolesFromCanvas = (canvas: HTMLCanvasElement): { x: number; y: number; w: number; h: number }[] => {
     try {
-      const canvas = document.createElement("canvas");
-      canvas.width = 40;
-      canvas.height = 40;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return { isGreen: false, suggestedColor: "#00FF00" };
-      ctx.drawImage(img, 0, 0, 40, 40);
-      const data = ctx.getImageData(0, 0, 40, 40).data;
-      let greenCount = 0;
-      const totalPixels = 40 * 40;
+      const SCALE_MAX = 300;
+      const origW = canvas.width;
+      const origH = canvas.height;
+      if (!origW || !origH) return [];
+      const scale = Math.min(1, SCALE_MAX / Math.max(origW, origH));
+      const width = Math.max(10, Math.round(origW * scale));
+      const height = Math.max(10, Math.round(origH * scale));
+
+      const sCanvas = document.createElement("canvas");
+      sCanvas.width = width;
+      sCanvas.height = height;
+      const sCtx = sCanvas.getContext("2d", { willReadFrequently: true });
+      if (!sCtx) return [];
+      sCtx.drawImage(canvas, 0, 0, width, height);
+
+      const imgData = sCtx.getImageData(0, 0, width, height);
+      const data = imgData.data;
+
+      const isTransparent = new Uint8Array(width * height);
       for (let i = 0; i < data.length; i += 4) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        if (g > 130 && g > r * 1.25 && g > b * 1.25) {
-          greenCount++;
+        if (data[i + 3] < 120) {
+          isTransparent[i / 4] = 1;
         }
       }
-      if (greenCount / totalPixels > 0.05) {
-        return { isGreen: true, suggestedColor: "#00FF00" };
+
+      const visited = new Uint8Array(width * height);
+      const holes: { x: number; y: number; w: number; h: number }[] = [];
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = y * width + x;
+          if (isTransparent[idx] && !visited[idx]) {
+            let minX = x, maxX = x;
+            let minY = y, maxY = y;
+
+            const queue: [number, number][] = [[x, y]];
+            visited[idx] = 1;
+
+            let head = 0;
+            while (head < queue.length) {
+              const [cx, cy] = queue[head++];
+
+              if (cx < minX) minX = cx;
+              if (cx > maxX) maxX = cx;
+              if (cy < minY) minY = cy;
+              if (cy > maxY) maxY = cy;
+
+              const neighbors = [
+                [cx + 1, cy],
+                [cx - 1, cy],
+                [cx, cy + 1],
+                [cx, cy - 1]
+              ];
+
+              for (const [nx, ny] of neighbors) {
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                  const nidx = ny * width + nx;
+                  if (isTransparent[nidx] && !visited[nidx]) {
+                    visited[nidx] = 1;
+                    queue.push([nx, ny]);
+                  }
+                }
+              }
+            }
+
+            const w = maxX - minX + 1;
+            const h = maxY - minY + 1;
+            const area = w * h;
+            // Filter realistic photo holes (min 10% width or 4% height, min 1% area)
+            if (w >= width * 0.10 && h >= height * 0.04 && area >= (width * height) * 0.012 && w < width * 0.98 && h < height * 0.98) {
+              holes.push({
+                x: Math.round(minX / scale),
+                y: Math.round(minY / scale),
+                w: Math.round(w / scale),
+                h: Math.round(h / scale)
+              });
+            }
+          }
+        }
       }
-    } catch (e) {
-      console.warn("Chroma detection error:", e);
+
+      holes.sort((a, b) => {
+        if (Math.abs(a.y - b.y) > 25) {
+          return a.y - b.y;
+        }
+        return a.x - b.x;
+      });
+
+      return holes;
+    } catch (err) {
+      console.error("detectHoles error", err);
+      return [];
     }
-    return { isGreen: false, suggestedColor: "#00FF00" };
   };
 
-  // Chroma Key Algorithm: Euclidean distance in RGB color space
-  const applyChromaKey = (
-    srcImg: HTMLImageElement,
-    colorHex: string,
-    tolerance: number,
-    feather: number
-  ): string => {
-    const canvas = document.createElement("canvas");
-    const width = srcImg.naturalWidth || srcImg.width || 1200;
-    const height = srcImg.naturalHeight || srcImg.height || 1800;
-    canvas.width = width;
-    canvas.height = height;
+  const applyHolesToLayout = (holes: { x: number; y: number; w: number; h: number }[]) => {
+    setDetectedHoles(holes);
+    if (holes.length === 4) {
+      setNewLayout("2x2");
+      setNewPreset("auto");
+      setActionStatus("🎉 Terdeteksi 4 lubang foto! Layout otomatis disetel ke Grid 4 Foto (2x2 Auto).");
+    } else if (holes.length === 3) {
+      setNewLayout("3x1");
+      setNewPreset("auto");
+      setActionStatus("🎉 Terdeteksi 3 lubang foto! Layout otomatis disetel ke Strip 3 Foto (3x1 Auto).");
+    } else if (holes.length === 6) {
+      setNewLayout("3x2");
+      setNewPreset("auto");
+      setActionStatus("🎉 Terdeteksi 6 lubang foto! Layout otomatis disetel ke Grid 6 Foto (3x2 Auto).");
+    } else if (holes.length === 2) {
+      setNewLayout("2x1");
+      setNewPreset("auto");
+      setActionStatus("🎉 Terdeteksi 2 lubang foto! Layout otomatis disetel ke Strip 2 Foto (2x1 Auto).");
+    } else if (holes.length === 1) {
+      setNewLayout("1x1");
+      setNewPreset("auto");
+      setActionStatus("🎉 Terdeteksi 1 lubang foto! Layout otomatis disetel ke Foto Tunggal (1x1 Auto).");
+    } else if (holes.length === 8) {
+      setNewLayout("4x2");
+      setNewPreset("auto");
+      setActionStatus("🎉 Terdeteksi 8 lubang foto! Layout otomatis disetel ke Grid 8 Foto (4x2 Auto).");
+    } else if (holes.length > 0) {
+      setNewPreset("auto");
+      setActionStatus(`✨ Terdeteksi ${holes.length} lubang foto pada bingkai.`);
+    }
+  };
 
+  // Magic Wand: Flood fill erase contiguous region starting at (startX, startY)
+  const floodFillErase = (
+    canvas: HTMLCanvasElement,
+    startX: number,
+    startY: number,
+    tolerance: number
+  ): { dataUrl: string; holes: { x: number; y: number; w: number; h: number }[] } => {
+    const width = canvas.width;
+    const height = canvas.height;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return srcImg.src;
+    if (!ctx) return { dataUrl: canvas.toDataURL("image/png"), holes: [] };
 
-    ctx.drawImage(srcImg, 0, 0, width, height);
     const imgData = ctx.getImageData(0, 0, width, height);
     const data = imgData.data;
 
-    const { r: tr, g: tg, b: tb } = hexToRgb(colorHex);
+    const startIdx = (startY * width + startX) * 4;
+    const sr = data[startIdx];
+    const sg = data[startIdx + 1];
+    const sb = data[startIdx + 2];
+    const sa = data[startIdx + 3];
 
-    // Max Euclidean distance in RGB: sqrt(255^2 * 3) ≈ 441.67
+    if (sa === 0) {
+      return { dataUrl: canvas.toDataURL("image/png"), holes: detectHolesFromCanvas(canvas) };
+    }
+
     const maxDist = 441.67;
-    const thresholdDist = (tolerance / 100) * maxDist;
-    const featherDist = (feather / 100) * maxDist;
+    const threshold = (tolerance / 100) * maxDist;
+
+    const visited = new Uint8Array(width * height);
+    const queue = new Int32Array(width * height * 2);
+    let head = 0;
+    let tail = 0;
+
+    queue[tail++] = startX;
+    queue[tail++] = startY;
+    visited[startY * width + startX] = 1;
+
+    while (head < tail) {
+      const cx = queue[head++];
+      const cy = queue[head++];
+      const idx = (cy * width + cx) * 4;
+
+      data[idx + 3] = 0; // Erase to transparent
+
+      const neighbors = [
+        cx + 1, cy,
+        cx - 1, cy,
+        cx, cy + 1,
+        cx, cy - 1,
+      ];
+
+      for (let i = 0; i < 8; i += 2) {
+        const nx = neighbors[i];
+        const ny = neighbors[i + 1];
+
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+          const pIdx = ny * width + nx;
+          if (!visited[pIdx]) {
+            visited[pIdx] = 1;
+            const nDataIdx = pIdx * 4;
+            const nr = data[nDataIdx];
+            const ng = data[nDataIdx + 1];
+            const nb = data[nDataIdx + 2];
+            const na = data[nDataIdx + 3];
+
+            if (na > 0) {
+              const dr = nr - sr;
+              const dg = ng - sg;
+              const db = nb - sb;
+              const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+
+              if (dist <= threshold) {
+                queue[tail++] = nx;
+                queue[tail++] = ny;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+    const dataUrl = canvas.toDataURL("image/png");
+    const holes = detectHolesFromCanvas(canvas);
+    return { dataUrl, holes };
+  };
+
+  // Global color erase across the entire canvas
+  const globalEraseColor = (
+    canvas: HTMLCanvasElement,
+    targetHex: string,
+    tolerance: number
+  ): { dataUrl: string; holes: { x: number; y: number; w: number; h: number }[] } => {
+    const width = canvas.width;
+    const height = canvas.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return { dataUrl: canvas.toDataURL("image/png"), holes: [] };
+
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
+
+    const { r: tr, g: tg, b: tb } = hexToRgb(targetHex);
+    const maxDist = 441.67;
+    const threshold = (tolerance / 100) * maxDist;
 
     for (let i = 0; i < data.length; i += 4) {
-      const a = data[i + 3];
-      if (a === 0) continue;
-
+      if (data[i + 3] === 0) continue;
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
@@ -362,51 +555,16 @@ export function AdminScreen({
       const db = b - tb;
       const dist = Math.sqrt(dr * dr + dg * dg + db * db);
 
-      if (dist <= thresholdDist) {
-        data[i + 3] = 0; // completely transparent
-      } else if (featherDist > 0 && dist < thresholdDist + featherDist) {
-        const factor = (dist - thresholdDist) / featherDist;
-        data[i + 3] = Math.round(a * factor); // soft edge
+      if (dist <= threshold) {
+        data[i + 3] = 0;
       }
     }
 
     ctx.putImageData(imgData, 0, 0);
-    return canvas.toDataURL("image/png");
+    const dataUrl = canvas.toDataURL("image/png");
+    const holes = detectHolesFromCanvas(canvas);
+    return { dataUrl, holes };
   };
-
-  // Re-process image whenever chroma key settings or raw image change
-  useEffect(() => {
-    if (!rawBase64Img) {
-      setBase64Img("");
-      return;
-    }
-
-    if (!enableChromaKey) {
-      setBase64Img(rawBase64Img);
-      return;
-    }
-
-    setIsProcessingChroma(true);
-    const timer = setTimeout(() => {
-      const img = originalImageRef.current;
-      if (!img) {
-        const tempImg = new Image();
-        tempImg.onload = () => {
-          originalImageRef.current = tempImg;
-          const result = applyChromaKey(tempImg, chromaColor, chromaTolerance, chromaFeather);
-          setBase64Img(result);
-          setIsProcessingChroma(false);
-        };
-        tempImg.src = rawBase64Img;
-      } else {
-        const result = applyChromaKey(img, chromaColor, chromaTolerance, chromaFeather);
-        setBase64Img(result);
-        setIsProcessingChroma(false);
-      }
-    }, 40);
-
-    return () => clearTimeout(timer);
-  }, [rawBase64Img, enableChromaKey, chromaColor, chromaTolerance, chromaFeather]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -418,24 +576,35 @@ export function AdminScreen({
     }
 
     setUploadError("");
+    setActionStatus("Sedang memproses gambar...");
     const reader = new FileReader();
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
-      setRawBase64Img(dataUrl);
 
       const img = new Image();
       img.onload = () => {
         originalImageRef.current = img;
-        const detection = detectIfGreenOrSolid(img);
-        setImageMeta({
-          width: img.naturalWidth || img.width,
-          height: img.naturalHeight || img.height,
-          isAutoGreen: detection.isGreen,
-        });
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        setImageMeta({ width: w, height: h });
 
-        if (detection.isGreen) {
-          setChromaColor(detection.suggestedColor);
-          setEnableChromaKey(true);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          const initialData = canvas.toDataURL("image/png");
+          setRawBase64Img(initialData);
+          setActiveCanvasData(initialData);
+          setHistoryStack([]);
+          workingCanvasRef.current = canvas;
+
+          const holes = detectHolesFromCanvas(canvas);
+          applyHolesToLayout(holes);
+          if (holes.length === 0) {
+            setActionStatus("💡 Lubang foto belum transparan. Klik kotak foto atau gunakan tombol di bawah.");
+          }
         }
       };
       img.src = dataUrl;
@@ -446,45 +615,108 @@ export function AdminScreen({
     reader.readAsDataURL(file);
   };
 
-  // Eyedropper: Sample color by clicking directly on preview image
+  // 1-Click: Erase White Photo Boxes
+  const handleEraseWhite = () => {
+    if (!workingCanvasRef.current || !activeCanvasData) return;
+    setHistoryStack((prev) => [...prev.slice(-9), activeCanvasData]);
+    const res = globalEraseColor(workingCanvasRef.current, "#FFFFFF", chromaTolerance);
+    setActiveCanvasData(res.dataUrl);
+    applyHolesToLayout(res.holes);
+    setActionStatus("Warna putih berhasil dihapus!");
+  };
+
+  // 1-Click: Erase Green Screen Background
+  const handleEraseGreen = () => {
+    if (!workingCanvasRef.current || !activeCanvasData) return;
+    setHistoryStack((prev) => [...prev.slice(-9), activeCanvasData]);
+    const res = globalEraseColor(workingCanvasRef.current, "#00FF00", chromaTolerance);
+    setActiveCanvasData(res.dataUrl);
+    applyHolesToLayout(res.holes);
+    setActionStatus("Warna hijau (green screen) berhasil dihapus!");
+  };
+
+  // 1-Click: Erase Selected Custom Color
+  const handleEraseChosenColor = (hex: string) => {
+    if (!workingCanvasRef.current || !activeCanvasData) return;
+    setHistoryStack((prev) => [...prev.slice(-9), activeCanvasData]);
+    const res = globalEraseColor(workingCanvasRef.current, hex, chromaTolerance);
+    setActiveCanvasData(res.dataUrl);
+    applyHolesToLayout(res.holes);
+    setActionStatus(`Warna ${hex} berhasil dihapus!`);
+  };
+
+  // Interactive Click on Preview Canvas / Image
   const handlePreviewImageClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!rawBase64Img || !originalImageRef.current) return;
+    if (!workingCanvasRef.current || !activeCanvasData || !originalImageRef.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const xRatio = (e.clientX - rect.left) / rect.width;
     const yRatio = (e.clientY - rect.top) / rect.height;
 
-    const img = originalImageRef.current;
-    const naturalX = Math.floor(xRatio * (img.naturalWidth || img.width));
-    const naturalY = Math.floor(yRatio * (img.naturalHeight || img.height));
+    const canvas = workingCanvasRef.current;
+    const naturalX = Math.floor(xRatio * canvas.width);
+    const naturalY = Math.floor(yRatio * canvas.height);
 
-    const sampleCanvas = document.createElement("canvas");
-    sampleCanvas.width = 1;
-    sampleCanvas.height = 1;
-    const sCtx = sampleCanvas.getContext("2d", { willReadFrequently: true });
-    if (!sCtx) return;
+    // Save history for Undo
+    setHistoryStack((prev) => [...prev.slice(-9), activeCanvasData]);
 
-    sCtx.drawImage(img, naturalX, naturalY, 1, 1, 0, 0, 1, 1);
-    const p = sCtx.getImageData(0, 0, 1, 1).data;
-    const sampledHex = rgbToHex(p[0], p[1], p[2]);
-    setChromaColor(sampledHex);
-    setEnableChromaKey(true);
-    setIsEyedropperActive(false);
+    if (toolMode === "wand") {
+      // Erase only clicked contiguous box
+      const res = floodFillErase(canvas, naturalX, naturalY, chromaTolerance);
+      setActiveCanvasData(res.dataUrl);
+      applyHolesToLayout(res.holes);
+      setActionStatus("Area kotak yang diklik berhasil dihapus!");
+    } else {
+      // Global erase matching color of the clicked pixel
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (ctx) {
+        const p = ctx.getImageData(naturalX, naturalY, 1, 1).data;
+        const hex = rgbToHex(p[0], p[1], p[2]);
+        setChromaColor(hex);
+        const res = globalEraseColor(canvas, hex, chromaTolerance);
+        setActiveCanvasData(res.dataUrl);
+        applyHolesToLayout(res.holes);
+        setActionStatus(`Warna ${hex} pada seluruh gambar berhasil dihapus!`);
+      }
+    }
   };
 
-  const handleNativeEyeDropper = async () => {
-    if ("EyeDropper" in window) {
-      try {
-        const eyeDropper = new (window as any).EyeDropper();
-        const result = await eyeDropper.open();
-        if (result?.sRGBHex) {
-          setChromaColor(result.sRGBHex);
-          setEnableChromaKey(true);
-        }
-      } catch (err) {
-        // User cancelled picker
+  // Undo last erase action
+  const handleUndo = () => {
+    if (historyStack.length === 0 || !workingCanvasRef.current) return;
+    const prevData = historyStack[historyStack.length - 1];
+    setHistoryStack((prev) => prev.slice(0, -1));
+    setActiveCanvasData(prevData);
+
+    const img = new Image();
+    img.onload = () => {
+      const ctx = workingCanvasRef.current?.getContext("2d", { willReadFrequently: true });
+      if (ctx && workingCanvasRef.current) {
+        ctx.clearRect(0, 0, workingCanvasRef.current.width, workingCanvasRef.current.height);
+        ctx.drawImage(img, 0, 0);
+        const holes = detectHolesFromCanvas(workingCanvasRef.current);
+        applyHolesToLayout(holes);
+        setActionStatus("Berhasil kembali ke langkah sebelumnya.");
       }
-    } else {
-      setIsEyedropperActive((prev) => !prev);
+    };
+    img.src = prevData;
+  };
+
+  // Reset to original uploaded image
+  const handleResetOriginal = () => {
+    if (!rawBase64Img || !originalImageRef.current) return;
+    setActiveCanvasData(rawBase64Img);
+    setHistoryStack([]);
+
+    const canvas = workingCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(originalImageRef.current, 0, 0);
+        const holes = detectHolesFromCanvas(canvas);
+        applyHolesToLayout(holes);
+        setActionStatus("Gambar dikembalikan ke kondisi awal.");
+      }
     }
   };
 
@@ -492,21 +724,23 @@ export function AdminScreen({
     setShowUploadModal(false);
     setNewName("");
     setRawBase64Img("");
-    setBase64Img("");
-    setEnableChromaKey(false);
+    setActiveCanvasData("");
+    setHistoryStack([]);
+    setDetectedHoles([]);
     setUploadError("");
-    setIsEyedropperActive(false);
+    setActionStatus("");
     setImageMeta(null);
+    workingCanvasRef.current = null;
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleSaveTemplate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName.trim()) {
-      setUploadError("Nama template harus diisi!");
+      setUploadError("Nama template bingkai harus diisi!");
       return;
     }
-    const finalImg = enableChromaKey ? base64Img : (base64Img || rawBase64Img);
+    const finalImg = activeCanvasData || rawBase64Img;
     if (!finalImg) {
       setUploadError("Gambar frame wajib diunggah!");
       return;
@@ -516,10 +750,10 @@ export function AdminScreen({
     try {
       await onAddTemplate(newName.trim(), newLayout, newPreset, finalImg);
       handleCloseUploadModal();
-      alert("Template bingkai berhasil ditambahkan ke Database!");
+      alert("✅ Bingkai berhasil ditambahkan ke Database!");
     } catch (err) {
       console.error(err);
-      setUploadError("Gagal menyimpan template.");
+      setUploadError("Gagal menyimpan template bingkai.");
     } finally {
       setIsSubmitting(false);
     }
@@ -1257,16 +1491,16 @@ export function AdminScreen({
       {/* ──────────────── MODAL UNGGAH & KONFIGURASI FRAME BARU ──────────────── */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 md:p-6 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-4xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl max-w-5xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[94vh] animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
               <div>
                 <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                   <Wand2 className="w-4 h-4 text-blue-600" />
-                  <span>Unggah & Konfigurasi Bingkai Baru</span>
+                  <span>Studio Unggah & Konfigurasi Bingkai</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Upload file PNG transparan atau gambar dengan warna latar (hijau/putih) untuk dihapus otomatis
+                  Upload file bingkai (PNG/JPG). Hapus kotak foto atau warna latar dengan 1 klik agar foto pengunjung masuk pas ke lubang bingkai.
                 </p>
               </div>
               <button
@@ -1280,7 +1514,7 @@ export function AdminScreen({
 
             {/* Modal Body: 2 Columns */}
             <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
-              {/* ─────── LEFT COLUMN: Form Inputs & Chroma Key Controls ─────── */}
+              {/* ─────── LEFT COLUMN: Form Inputs & Eraser Controls ─────── */}
               <div className="lg:col-span-6 p-6 space-y-4">
                 <form onSubmit={handleSaveTemplate} id="frame-upload-form" className="space-y-4">
                   <div className="space-y-1">
@@ -1289,7 +1523,7 @@ export function AdminScreen({
                       type="text"
                       value={newName}
                       onChange={(e) => setNewName(e.target.value)}
-                      placeholder="Contoh: Frame Event Wisuda 2026"
+                      placeholder="Contoh: Cute Pink Bears (4 Foto)"
                       className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
@@ -1302,12 +1536,12 @@ export function AdminScreen({
                         onChange={(e) => handleLayoutChange(e.target.value as any)}
                         className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
                       >
-                        <option value="3x1">Strip Vertikal (3x1)</option>
-                        <option value="3x2">Grid 6 Foto (3x2)</option>
-                        <option value="2x2">Grid 2x2 (2x2)</option>
-                        <option value="2x1">Strip Pendek (2x1)</option>
+                        <option value="2x2">Grid 4 Foto (2x2 / Custom 4 Lubang)</option>
+                        <option value="3x1">Strip Vertikal (3x1 / 3 Foto)</option>
+                        <option value="3x2">Grid 6 Foto (3x2 / 6 Foto)</option>
+                        <option value="2x1">Strip Pendek (2x1 / 2 Foto)</option>
                         <option value="1x1">Foto Tunggal (1x1)</option>
-                        <option value="4x2">Grid 8 Foto (4x2)</option>
+                        <option value="4x2">Grid 8 Foto (4x2 / 8 Foto)</option>
                       </select>
                     </div>
 
@@ -1346,16 +1580,16 @@ export function AdminScreen({
                     />
                     <div
                       onClick={() => fileInputRef.current?.click()}
-                      className={`border-2 border-dashed rounded-xl p-3.5 text-center cursor-pointer transition-colors ${
-                        rawBase64Img
+                      className={`border-2 border-dashed rounded-xl p-3 text-center cursor-pointer transition-colors ${
+                        activeCanvasData
                           ? "border-blue-400 bg-blue-50/20 hover:bg-blue-50/40"
                           : "border-slate-200 hover:border-blue-500 bg-slate-50 hover:bg-blue-50/30"
                       }`}
                     >
-                      {rawBase64Img ? (
+                      {activeCanvasData ? (
                         <div className="flex items-center justify-center gap-3">
                           <img
-                            src={base64Img || rawBase64Img}
+                            src={activeCanvasData}
                             alt="Thumbnail"
                             className="w-10 h-10 object-contain rounded border border-slate-200 bg-[repeating-conic-gradient(#cbd5e1_0_25%,#fff_0_50%)] bg-[length:6px_6px]"
                           />
@@ -1367,153 +1601,123 @@ export function AdminScreen({
                       ) : (
                         <div className="py-2 space-y-1">
                           <Plus className="w-5 h-5 text-slate-400 mx-auto" />
-                          <span className="text-xs font-semibold text-slate-700 block">Pilih Gambar Frame (PNG, JPG, WEBP)</span>
-                          <span className="text-[10px] text-slate-400 block">Dapat berupa gambar transparan atau gambar dengan latar hijau/polos</span>
+                          <span className="text-xs font-semibold text-slate-700 block">Pilih Gambar Frame (PNG / JPG / WEBP)</span>
+                          <span className="text-[10px] text-slate-400 block">Bisa berupa gambar transparan atau gambar dengan kotak putih / latar hijau</span>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* ─────── CHROMA KEY / AUTO BACKGROUND REMOVER PANEL ─────── */}
-                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
+                  {/* ─────── ALAT HAPUS WARNA & KOTAK FOTO (ALWAYS ACTIVE) ─────── */}
+                  <div className="p-4 rounded-xl border border-blue-100 bg-blue-50/30 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                        <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs">
                           <Sparkles className="w-4 h-4" />
                         </div>
                         <div>
                           <span className="text-xs font-bold text-slate-900 block leading-tight">
-                            Hapus Background Warna
+                            Alat Penghapus Kotak & Warna Bingkai
                           </span>
                           <span className="text-[10px] text-slate-500 font-medium">
-                            Chroma Key otomatis untuk latar hijau / warna lain
+                            Klik tombol cepat atau klik langsung pada kotak gambar di samping
                           </span>
                         </div>
                       </div>
 
-                      {/* Toggle Switch */}
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={enableChromaKey}
-                          onChange={(e) => setEnableChromaKey(e.target.checked)}
-                          className="sr-only peer"
-                        />
-                        <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
-                      </label>
+                      {/* Undo & Reset Buttons */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={handleUndo}
+                          disabled={historyStack.length === 0}
+                          className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+                          title="Batal langkah terakhir"
+                        >
+                          <Undo className="w-3 h-3 text-slate-600" />
+                          <span>Undo</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleResetOriginal}
+                          disabled={!rawBase64Img || historyStack.length === 0}
+                          className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+                          title="Reset ke gambar awal sebelum diedit"
+                        >
+                          <RotateCcw className="w-3 h-3 text-slate-600" />
+                          <span>Reset</span>
+                        </button>
+                      </div>
                     </div>
 
-                    {enableChromaKey && (
-                      <div className="pt-2 border-t border-slate-200/80 space-y-3 animate-in fade-in duration-200">
-                        {/* Quick Presets & Color Picker */}
-                        <div className="space-y-1.5">
-                          <label className="block text-[11px] font-semibold text-slate-700">Warna yang Dihapus:</label>
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setChromaColor("#00FF00")}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
-                                chromaColor.toUpperCase() === "#00FF00"
-                                  ? "bg-emerald-500 text-white border-emerald-600 shadow-xs"
-                                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                              }`}
-                            >
-                              <span className="w-2.5 h-2.5 rounded-full bg-[#00FF00] border border-black/20"></span>
-                              <span>Hijau</span>
-                            </button>
+                    {/* Quick 1-Click Action Buttons */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleEraseWhite}
+                        disabled={!activeCanvasData}
+                        className="p-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs hover:border-blue-400 cursor-pointer disabled:opacity-50"
+                      >
+                        <div className="w-5 h-5 rounded-full border-2 border-slate-300 bg-white shadow-xs"></div>
+                        <span className="text-[11px] font-bold text-slate-800 leading-tight text-center">Hapus Putih (Kotak Foto)</span>
+                        <span className="text-[9px] text-slate-400">1 Klik Semua Putih</span>
+                      </button>
 
-                            <button
-                              type="button"
-                              onClick={() => setChromaColor("#FFFFFF")}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
-                                chromaColor.toUpperCase() === "#FFFFFF"
-                                  ? "bg-slate-800 text-white border-slate-900 shadow-xs"
-                                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                              }`}
-                            >
-                              <span className="w-2.5 h-2.5 rounded-full bg-white border border-slate-300"></span>
-                              <span>Putih</span>
-                            </button>
+                      <button
+                        type="button"
+                        onClick={handleEraseGreen}
+                        disabled={!activeCanvasData}
+                        className="p-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs hover:border-emerald-400 cursor-pointer disabled:opacity-50"
+                      >
+                        <div className="w-5 h-5 rounded-full border border-emerald-400 bg-[#00FF00] shadow-xs"></div>
+                        <span className="text-[11px] font-bold text-slate-800 leading-tight text-center">Hapus Hijau (Chroma)</span>
+                        <span className="text-[9px] text-slate-400">1 Klik Green Screen</span>
+                      </button>
 
-                            <button
-                              type="button"
-                              onClick={() => setChromaColor("#0000FF")}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
-                                chromaColor.toUpperCase() === "#0000FF"
-                                  ? "bg-blue-600 text-white border-blue-700 shadow-xs"
-                                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                              }`}
-                            >
-                              <span className="w-2.5 h-2.5 rounded-full bg-[#0000FF] border border-black/20"></span>
-                              <span>Biru</span>
-                            </button>
+                      <button
+                        type="button"
+                        onClick={() => setToolMode(toolMode === "wand" ? "global" : "wand")}
+                        disabled={!activeCanvasData}
+                        className={`p-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs cursor-pointer border ${
+                          toolMode === "wand"
+                            ? "bg-blue-600 text-white border-blue-700 shadow-blue-500/20"
+                            : "bg-white text-slate-800 border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        <Wand2 className={`w-5 h-5 ${toolMode === "wand" ? "text-white" : "text-blue-600"}`} />
+                        <span className="text-[11px] font-bold leading-tight text-center">Magic Wand</span>
+                        <span className={`text-[9px] ${toolMode === "wand" ? "text-blue-100" : "text-slate-400"}`}>
+                          {toolMode === "wand" ? "Aktif (Klik Kotak)" : "Klik di Gambar"}
+                        </span>
+                      </button>
+                    </div>
 
-                            {/* Native Eyedropper or Canvas Pipet */}
-                            <button
-                              type="button"
-                              onClick={handleNativeEyeDropper}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 border transition-all cursor-pointer ${
-                                isEyedropperActive
-                                  ? "bg-purple-600 text-white border-purple-700 ring-2 ring-purple-400/40"
-                                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                              }`}
-                              title="Klik untuk memilih warna langsung dari gambar"
-                            >
-                              <Pipette className="w-3.5 h-3.5 text-purple-600" />
-                              <span>{isEyedropperActive ? "Klik Gambar" : "Pipet Warna"}</span>
-                            </button>
-
-                            {/* Color Picker input */}
-                            <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-0.5 ml-auto">
-                              <input
-                                type="color"
-                                value={chromaColor}
-                                onChange={(e) => setChromaColor(e.target.value)}
-                                className="w-5 h-5 rounded cursor-pointer border-none bg-transparent p-0"
-                              />
-                              <span className="font-mono text-[10px] text-slate-600 uppercase font-bold">{chromaColor}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Sliders: Tolerance & Feather */}
-                        <div className="space-y-2 pt-1">
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between text-[11px]">
-                              <span className="font-semibold text-slate-700">Toleransi Warna (Threshold)</span>
-                              <span className="font-mono font-bold text-blue-600">{chromaTolerance}%</span>
-                            </div>
-                            <input
-                              type="range"
-                              min="5"
-                              max="75"
-                              value={chromaTolerance}
-                              onChange={(e) => setChromaTolerance(Number(e.target.value))}
-                              className="w-full accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
-                            />
-                          </div>
-
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between text-[11px]">
-                              <span className="font-semibold text-slate-700">Kehalusan Tepi (Feather)</span>
-                              <span className="font-mono font-bold text-blue-600">{chromaFeather}%</span>
-                            </div>
-                            <input
-                              type="range"
-                              min="0"
-                              max="20"
-                              value={chromaFeather}
-                              onChange={(e) => setChromaFeather(Number(e.target.value))}
-                              className="w-full accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="p-2 rounded-lg bg-blue-50/80 border border-blue-100 text-[10px] text-blue-700 font-medium">
-                          💡 <strong>Tip Praktis:</strong> Anda juga bisa mengklik langsung pada warna hijau di gambar pratinjau samping untuk memilih warna yang ingin dijadikan transparan.
-                        </div>
+                    {/* Mode & Tolerance Slider */}
+                    <div className="pt-2 border-t border-slate-200/80 space-y-2">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-slate-700 flex items-center gap-1">
+                          <span>Toleransi Kepekaan Warna</span>
+                          <span className="text-[10px] text-slate-400">(Geser jika warna kurang bersih terhapus)</span>
+                        </span>
+                        <span className="font-mono font-bold text-blue-600">{chromaTolerance}%</span>
                       </div>
-                    )}
+                      <input
+                        type="range"
+                        min="5"
+                        max="65"
+                        value={chromaTolerance}
+                        onChange={(e) => setChromaTolerance(Number(e.target.value))}
+                        className="w-full accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                      />
+
+                      {/* Action status message */}
+                      {actionStatus && (
+                        <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800 font-medium animate-in fade-in flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>{actionStatus}</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {uploadError && (
@@ -1524,17 +1728,19 @@ export function AdminScreen({
                 </form>
               </div>
 
-              {/* ─────── RIGHT COLUMN: Interactive Live Preview ─────── */}
+              {/* ─────── RIGHT COLUMN: Interactive Live Preview & Simulation ─────── */}
               <div className="lg:col-span-6 p-6 bg-slate-50/50 flex flex-col justify-between space-y-4">
                 {/* Preview Controls Header */}
                 <div className="flex items-center justify-between">
                   <div>
                     <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                       <Eye className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Pratinjau Live Frame</span>
+                      <span>Pratinjau Live Bingkai</span>
                     </h4>
                     <span className="text-[10px] text-slate-400">
-                      {enableChromaKey ? "Mode Transparansi Aktif" : "Pratinjau Asli"}
+                      {detectedHoles.length > 0
+                        ? `🎉 ${detectedHoles.length} Lubang Transparan Terdeteksi`
+                        : "Klik kotak pada gambar untuk melubanginya"}
                     </span>
                   </div>
 
@@ -1568,98 +1774,83 @@ export function AdminScreen({
                 {/* Live Preview Display Box */}
                 <div
                   onClick={handlePreviewImageClick}
-                  className={`relative w-full aspect-[2/3] max-h-[380px] mx-auto rounded-2xl overflow-hidden border border-slate-200/90 shadow-sm flex items-center justify-center select-none ${
-                    isEyedropperActive ? "cursor-crosshair ring-2 ring-purple-500" : rawBase64Img ? "cursor-pointer" : ""
+                  className={`relative w-full aspect-[2/3] max-h-[400px] mx-auto rounded-2xl overflow-hidden border border-slate-200/90 shadow-sm flex items-center justify-center select-none ${
+                    activeCanvasData ? "cursor-crosshair" : ""
                   } ${
                     previewTab === "checkerboard"
                       ? "bg-[repeating-conic-gradient(#cbd5e1_0_25%,#fff_0_50%)] bg-[length:14px_14px]"
                       : "bg-slate-900"
                   }`}
-                  title={rawBase64Img ? "Klik di bagian warna untuk mengambil warna pipet" : undefined}
+                  title={activeCanvasData ? "Klik di bagian kotak untuk melubangi dengan Magic Wand" : undefined}
                 >
-                  {/* Sample Photo Placeholder Layer (Behind the frame) */}
+                  {/* Photo Simulation Layer: Render sample photos directly inside detected holes! */}
                   {previewTab === "photos" && (
                     <div className="absolute inset-0 z-0 p-3 pointer-events-none">
-                      {newLayout === "3x1" && (
-                        <div className="w-full h-full flex flex-col gap-2 justify-between">
-                          {[1, 2, 3].map((num) => (
-                            <div key={num} className="flex-1 rounded-xl bg-gradient-to-tr from-sky-400 to-indigo-600 flex flex-col items-center justify-center text-white shadow-inner opacity-90">
-                              <Camera className="w-5 h-5 mb-0.5 opacity-80" />
-                              <span className="text-[10px] font-bold">Foto #{num}</span>
+                      {detectedHoles.length > 0 ? (
+                        // Render photos directly positioned inside the detected holes
+                        detectedHoles.map((hole, i) => {
+                          const totalW = imageMeta?.width || 1200;
+                          const totalH = imageMeta?.height || 1800;
+                          const leftPct = (hole.x / totalW) * 100;
+                          const topPct = (hole.y / totalH) * 100;
+                          const widthPct = (hole.w / totalW) * 100;
+                          const heightPct = (hole.h / totalH) * 100;
+
+                          const colors = [
+                            "from-sky-400 to-indigo-600",
+                            "from-pink-400 to-rose-600",
+                            "from-amber-400 to-orange-500",
+                            "from-emerald-400 to-teal-600",
+                            "from-purple-500 to-indigo-600",
+                            "from-cyan-400 to-blue-600",
+                            "from-fuchsia-400 to-pink-600",
+                            "from-yellow-400 to-amber-600",
+                          ];
+                          const colorClass = colors[i % colors.length];
+
+                          return (
+                            <div
+                              key={i}
+                              className={`absolute rounded-xl bg-gradient-to-tr ${colorClass} flex flex-col items-center justify-center text-white shadow-inner opacity-95`}
+                              style={{
+                                left: `${leftPct}%`,
+                                top: `${topPct}%`,
+                                width: `${widthPct}%`,
+                                height: `${heightPct}%`,
+                              }}
+                            >
+                              <Camera className="w-5 h-5 mb-0.5 opacity-90" />
+                              <span className="text-[10px] font-bold">Foto #{i + 1}</span>
                             </div>
-                          ))}
-                        </div>
-                      )}
-                      {newLayout === "3x2" && (
-                        <div className="w-full h-full grid grid-cols-2 grid-rows-3 gap-1.5">
-                          {[1, 2, 3, 4, 5, 6].map((num) => (
-                            <div key={num} className="rounded-lg bg-gradient-to-tr from-pink-400 to-rose-600 flex flex-col items-center justify-center text-white shadow-inner opacity-90">
-                              <Camera className="w-4 h-4 opacity-80" />
-                              <span className="text-[8px] font-bold">#{num}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {newLayout === "2x2" && (
-                        <div className="w-full h-full grid grid-cols-2 grid-rows-2 gap-2">
-                          {[1, 2, 3, 4].map((num) => (
-                            <div key={num} className="rounded-xl bg-gradient-to-tr from-amber-400 to-orange-500 flex flex-col items-center justify-center text-white shadow-inner opacity-90">
-                              <Camera className="w-5 h-5 mb-0.5 opacity-80" />
-                              <span className="text-[10px] font-bold">Foto #{num}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {newLayout === "2x1" && (
-                        <div className="w-full h-full flex flex-col gap-3 justify-between">
-                          {[1, 2].map((num) => (
-                            <div key={num} className="flex-1 rounded-xl bg-gradient-to-tr from-emerald-400 to-teal-600 flex flex-col items-center justify-center text-white shadow-inner opacity-90">
-                              <Camera className="w-6 h-6 mb-1 opacity-80" />
-                              <span className="text-[11px] font-bold">Foto #{num}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {newLayout === "1x1" && (
-                        <div className="w-full h-full rounded-xl bg-gradient-to-tr from-purple-500 to-indigo-600 flex flex-col items-center justify-center text-white shadow-inner opacity-90">
-                          <Camera className="w-10 h-10 mb-2 opacity-80" />
-                          <span className="text-xs font-bold">Foto Tunggal 1x1</span>
-                        </div>
-                      )}
-                      {newLayout === "4x2" && (
-                        <div className="w-full h-full grid grid-cols-2 grid-rows-4 gap-1">
-                          {[1, 2, 3, 4, 5, 6, 7, 8].map((num) => (
-                            <div key={num} className="rounded bg-gradient-to-tr from-blue-400 to-cyan-500 flex flex-col items-center justify-center text-white shadow-inner opacity-90">
-                              <Camera className="w-3.5 h-3.5 opacity-80" />
-                              <span className="text-[8px] font-bold">#{num}</span>
-                            </div>
-                          ))}
+                          );
+                        })
+                      ) : (
+                        // Fallback grid when holes aren't transparent yet
+                        <div className="w-full h-full flex flex-col items-center justify-center text-white/70 p-4 text-center">
+                          <Camera className="w-8 h-8 mb-2 opacity-50" />
+                          <p className="text-xs font-bold">Kotak foto belum berlubang transparan</p>
+                          <p className="text-[10px] text-white/60 mt-1 max-w-[220px]">
+                            Gunakan tombol "Hapus Putih" atau klik kotak foto pada tab Transparansi
+                          </p>
                         </div>
                       )}
                     </div>
                   )}
 
                   {/* Frame Image Layer (Overlaid on top) */}
-                  {rawBase64Img ? (
-                    <div className="relative w-full h-full z-10 flex items-center justify-center">
+                  {activeCanvasData ? (
+                    <div className="relative w-full h-full z-10 flex items-center justify-center pointer-events-none">
                       <img
                         ref={previewImgRef}
-                        src={enableChromaKey ? base64Img : rawBase64Img}
+                        src={activeCanvasData}
                         alt="Frame Preview"
-                        className="w-full h-full object-contain pointer-events-none"
+                        className="w-full h-full object-contain"
                       />
 
-                      {/* Processing Indicator */}
-                      {isProcessingChroma && (
-                        <div className="absolute inset-0 bg-white/50 backdrop-blur-xs flex items-center justify-center">
-                          <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
-                        </div>
-                      )}
-
-                      {/* Pipette Active Overlay Hint */}
-                      {isEyedropperActive && (
-                        <div className="absolute top-2 left-2 right-2 bg-purple-900/90 text-white text-[10px] font-bold py-1 px-2.5 rounded-lg shadow-md text-center">
-                          🎯 Mode Pipet: Klik pada warna gambar yang ingin dihapus
+                      {/* Wand Hint Banner */}
+                      {previewTab === "checkerboard" && (
+                        <div className="absolute bottom-2 left-2 right-2 bg-slate-900/80 backdrop-blur-xs text-white text-[10px] font-medium py-1 px-2.5 rounded-lg shadow-md text-center">
+                          🪄 Klik kotak foto untuk melubanginya secara instan
                         </div>
                       )}
                     </div>
@@ -1668,7 +1859,7 @@ export function AdminScreen({
                       <ImageIcon className="w-12 h-12 mx-auto opacity-40" />
                       <p className="text-xs font-semibold text-slate-600">Belum ada gambar dipilih</p>
                       <p className="text-[11px] text-slate-400 max-w-[200px] mx-auto">
-                        Pilih berkas frame di sebelah kiri untuk melihat hasil pratinjau langsung
+                        Pilih berkas frame di sebelah kiri untuk melihat pratinjau live
                       </p>
                     </div>
                   )}
@@ -1677,40 +1868,55 @@ export function AdminScreen({
                 {/* Preview Meta / Status */}
                 <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
                   <div className="flex items-center gap-1.5">
-                    {enableChromaKey ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md font-semibold border border-emerald-200">
-                        <CheckCircle2 className="w-3 h-3" />
-                        <span>Background ({chromaColor}) Dihapus</span>
+                    {detectedHoles.length > 0 ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-md font-semibold border border-emerald-200">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>{detectedHoles.length} Lubang Foto Siap</span>
                       </span>
                     ) : (
-                      <span className="text-slate-500 font-medium">Gambar Utuh (Tanpa Hapus Warna)</span>
+                      <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md font-medium border border-amber-200">
+                        0 Lubang Transparan
+                      </span>
                     )}
                   </div>
 
-                  <span className="text-slate-400 font-medium">
-                    {newLayout} • {HOLE_PRESETS[newLayout].find((p) => p.id === newPreset)?.label || newPreset}
+                  <span className="text-slate-500 font-semibold">
+                    {LAYOUT_LABELS[newLayout] || newLayout}
                   </span>
                 </div>
               </div>
             </div>
 
             {/* Modal Footer: Action Buttons */}
-            <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3 shrink-0">
-              <button
-                type="button"
-                onClick={handleCloseUploadModal}
-                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-white text-xs font-bold transition-colors cursor-pointer"
-              >
-                Batal
-              </button>
-              <button
-                type="submit"
-                form="frame-upload-form"
-                disabled={isSubmitting || !newName || (!base64Img && !rawBase64Img)}
-                className="px-6 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-blue-600/20 transition-all disabled:opacity-50 cursor-pointer"
-              >
-                {isSubmitting ? "Menyimpan ke Cloud..." : "Simpan Bingkai"}
-              </button>
+            <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between shrink-0">
+              <div className="text-xs text-slate-500">
+                {detectedHoles.length > 0 ? (
+                  <span className="text-emerald-700 font-semibold">
+                    ✅ Bingkai siap digunakan dengan {detectedHoles.length} foto!
+                  </span>
+                ) : (
+                  <span className="text-slate-500">
+                    💡 Tip: Lubangi semua kotak foto agar hasil foto terlihat di dalam bingkai.
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCloseUploadModal}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-white text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  form="frame-upload-form"
+                  disabled={isSubmitting || !newName || !activeCanvasData}
+                  className="px-6 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-blue-600/20 transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {isSubmitting ? "Menyimpan ke Cloud..." : "Simpan Bingkai"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
