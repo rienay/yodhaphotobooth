@@ -955,7 +955,7 @@ function FramedLiveView({
         {/* Live Badge */}
         <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-white text-[10px] font-black uppercase tracking-wider shadow-md">
           <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
-          <span>LIVE PHOTO 3s</span>
+          <span>LIVE PHOTO 5s</span>
         </div>
       </div>
 
@@ -980,7 +980,7 @@ function FramedLiveView({
           )}
         </button>
 
-        {/* 2. Optional: Download 12-Second Framed GIF */}
+        {/* 2. Optional: Download Framed GIF */}
         <button
           onClick={handleDownloadFramedGif}
           disabled={isComposingGif || isComposing}
@@ -989,18 +989,18 @@ function FramedLiveView({
           {isComposingGif ? (
             <>
               <div className="w-3.5 h-3.5 border-2 border-slate-200 border-t-transparent rounded-full animate-spin" />
-              <span>{downloadProgress || "Merender GIF 12 detik..."}</span>
+              <span>{downloadProgress || "Merender animasi GIF..."}</span>
             </>
           ) : (
             <>
               <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span>Unduh Versi Animasi GIF (12 Detik Loop)</span>
+              <span>Unduh Versi Animasi GIF (Loop)</span>
             </>
           )}
         </button>
 
         <p className="text-[10px] text-slate-400 text-center">
-          Foto live berformat MP4 kualitas HD menampilkan video 3 detik di dalam bingkai foto.
+          Foto live berformat MP4 kualitas HD menampilkan video 5 detik di dalam bingkai foto.
         </p>
 
         {/* 3. Download Individual 3s Video per pose */}

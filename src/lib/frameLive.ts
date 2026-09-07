@@ -77,9 +77,9 @@ export async function convertBlobToMp4(inputBlob: Blob): Promise<Blob> {
 }
 
 /**
- * Record a 3-second live video clip from camera MediaStream and output true H.264 MP4
+ * Record a 5-second live video clip from camera MediaStream and output true H.264 MP4
  */
-export function recordLiveClip(stream: MediaStream, durationMs = 3000): Promise<string> {
+export function recordLiveClip(stream: MediaStream, durationMs = 5000): Promise<string> {
   return new Promise((resolve) => {
     try {
       const mimeType = MediaRecorder.isTypeSupported("video/mp4;codecs=avc1")
@@ -248,13 +248,13 @@ export function detectHolesFromImage(frameImg: HTMLImageElement): FrameHole[] {
 }
 
 /**
- * Composite multiple 3-second live pose videos into a single framed live video (.webm)
+ * Composite multiple 5-second live pose videos into a single framed live video (.mp4)
  */
 export async function composeLiveVideoFrame(
   templateImgSrc: string,
   videoUrls: string[],
   layout: string,
-  durationMs = 3200
+  durationMs = 5200
 ): Promise<string> {
   if (!videoUrls || videoUrls.length === 0 || !templateImgSrc) {
     throw new Error("Missing video URLs or template for live video frame");
@@ -407,8 +407,8 @@ export async function composeLiveVideoFrame(
 }
 
 /**
- * Generate a 12-second framed Live GIF by capturing the 3-second live pose videos
- * inside the photo frame holes and repeating them 4 times (3s x 4 = 12 seconds).
+ * Generate a loop framed Live GIF by capturing the 5-second live pose videos
+ * inside the photo frame holes and repeating them (e.g. 5s x 2 or 3 repeats).
  */
 export async function composeLiveGifFrame(
   templateImgSrc: string,
@@ -416,7 +416,7 @@ export async function composeLiveGifFrame(
   layout: string,
   maxDimension = 420,
   fps = 8,
-  repeats = 4
+  repeats = 2
 ): Promise<string> {
   if (!videoUrls || videoUrls.length === 0 || !templateImgSrc) {
     throw new Error("Missing video URLs or template for live GIF frame");
@@ -487,11 +487,11 @@ export async function composeLiveGifFrame(
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("Could not create canvas context");
 
-  const totalCycleFrames = Math.round(3 * fps); // 24 frames for 3s
+  const totalCycleFrames = Math.round(5 * fps); // 40 frames for 5s
   const frameIntervalMs = Math.round(1000 / fps); // ~125ms
   const capturedFrames: ImageData[] = [];
 
-  // Capture 1 full 3-second cycle
+  // Capture 1 full 5-second cycle
   for (let f = 0; f < totalCycleFrames; f++) {
     // 1. Draw white background
     ctx.fillStyle = "#FFFFFF";
@@ -567,14 +567,14 @@ export async function composeLiveGifFrame(
 }
 
 /**
- * Generate a 12-second GIF from a 3-second live video clip (repeats 4 times)
+ * Generate a looped GIF from a 5-second live video clip
  * Aspect ratio strictly matches native camera video!
  */
 export async function generate12sGifFromVideo(
   videoSrc: string,
   maxDimension = 480,
   fps = 8,
-  repeats = 4
+  repeats = 2
 ): Promise<string> {
   if (!videoSrc) throw new Error("No video source provided");
 
@@ -617,7 +617,7 @@ export async function generate12sGifFromVideo(
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("Could not create canvas context");
 
-  const totalCycleFrames = Math.round(3 * fps); // 24 frames
+  const totalCycleFrames = Math.round(5 * fps); // 40 frames for 5s
   const frameIntervalMs = Math.round(1000 / fps); // 125ms
   const capturedFrames: ImageData[] = [];
 

@@ -1391,14 +1391,14 @@ function ShootScreen({
     const capturedVideos: string[] = [];
 
     for (let i = 0; i < total; i++) {
-      // Start recording 3-second live clip for this pose during countdown
+      // Start recording 5-second live clip for this pose during countdown
       const recordPromise = streamRef.current
-        ? recordLiveClip(streamRef.current, 3000)
+        ? recordLiveClip(streamRef.current, 5000)
         : Promise.resolve("");
 
-      for (let n = 3; n >= 1; n--) {
+      for (let n = 5; n >= 1; n--) {
         setCountdown(n);
-        await wait(1000); // 3 seconds total countdown
+        await wait(1000); // 5 seconds total countdown
       }
       setCountdown(null);
       setFlashing(true);
@@ -1695,10 +1695,10 @@ function ReviewScreen({
   const snapRetake = async () => {
     if (retakeIdx === null || !retakeVideoRef.current) return;
     const recordPromise = retakeStreamRef.current
-      ? recordLiveClip(retakeStreamRef.current, 3000)
+      ? recordLiveClip(retakeStreamRef.current, 5000)
       : Promise.resolve("");
 
-    for (let n = 3; n >= 1; n--) {
+    for (let n = 5; n >= 1; n--) {
       setRetakeCountdown(n);
       await wait(1000);
     }
