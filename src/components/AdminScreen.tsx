@@ -33,6 +33,10 @@ import {
   Layers,
   Undo,
   RotateCcw,
+  Scissors,
+  Square,
+  Move,
+  Lock,
 } from "lucide-react";
 
 export interface Template {
@@ -43,6 +47,61 @@ export interface Template {
   isCustom: boolean;
   enabled: boolean;
   presetId: string;
+}
+
+export interface PhotoBox {
+  id: string;
+  x: number; // percentage (0 - 100)
+  y: number; // percentage (0 - 100)
+  w: number; // percentage (0 - 100)
+  h: number; // percentage (0 - 100)
+}
+
+function getDefaultBoxesForLayout(layout: "3x1" | "3x2" | "2x1" | "1x1" | "2x2" | "4x2"): PhotoBox[] {
+  switch (layout) {
+    case "1x1":
+      return [{ id: "box_1", x: 8, y: 8, w: 84, h: 84 }];
+    case "2x1":
+      return [
+        { id: "box_1", x: 10, y: 8, w: 80, h: 40 },
+        { id: "box_2", x: 10, y: 52, w: 80, h: 40 },
+      ];
+    case "3x1":
+      return [
+        { id: "box_1", x: 10, y: 5, w: 80, h: 27 },
+        { id: "box_2", x: 10, y: 36, w: 80, h: 27 },
+        { id: "box_3", x: 10, y: 67, w: 80, h: 27 },
+      ];
+    case "2x2":
+      return [
+        { id: "box_1", x: 6, y: 6, w: 42, h: 42 },
+        { id: "box_2", x: 52, y: 6, w: 42, h: 42 },
+        { id: "box_3", x: 6, y: 52, w: 42, h: 42 },
+        { id: "box_4", x: 52, y: 52, w: 42, h: 42 },
+      ];
+    case "3x2":
+      return [
+        { id: "box_1", x: 6, y: 5, w: 42, h: 27 },
+        { id: "box_2", x: 52, y: 5, w: 42, h: 27 },
+        { id: "box_3", x: 6, y: 36, w: 42, h: 27 },
+        { id: "box_4", x: 52, y: 36, w: 42, h: 27 },
+        { id: "box_5", x: 6, y: 67, w: 42, h: 27 },
+        { id: "box_6", x: 52, y: 67, w: 42, h: 27 },
+      ];
+    case "4x2":
+      return [
+        { id: "box_1", x: 6, y: 4, w: 42, h: 20 },
+        { id: "box_2", x: 52, y: 4, w: 42, h: 20 },
+        { id: "box_3", x: 6, y: 28, w: 42, h: 20 },
+        { id: "box_4", x: 52, y: 28, w: 42, h: 20 },
+        { id: "box_5", x: 6, y: 52, w: 42, h: 20 },
+        { id: "box_6", x: 52, y: 52, w: 42, h: 20 },
+        { id: "box_7", x: 6, y: 76, w: 42, h: 20 },
+        { id: "box_8", x: 52, y: 76, w: 42, h: 20 },
+      ];
+    default:
+      return [{ id: "box_1", x: 10, y: 10, w: 80, h: 80 }];
+  }
 }
 
 interface AdminScreenProps {
@@ -148,10 +207,23 @@ export function AdminScreen({
   const [previewTab, setPreviewTab] = useState<"checkerboard" | "photos">("checkerboard");
   const [detectedHoles, setDetectedHoles] = useState<{ x: number; y: number; w: number; h: number }[]>([]);
   const [imageMeta, setImageMeta] = useState<{ width: number; height: number } | null>(null);
-  const [actionStatus, setActionStatus] = useState("");
+  const [actionStatus, setActionStatus] = useState<string>("");
   const originalImageRef = useRef<HTMLImageElement | null>(null);
   const workingCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const previewImgRef = useRef<HTMLImageElement | null>(null);
+
+  // Photo Box Block Editor State
+  const [photoBoxes, setPhotoBoxes] = useState<PhotoBox[]>([]);
+  const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
+  const [dragState, setDragState] = useState<{
+    type: "move" | "resize";
+    boxId: string;
+    handle?: "nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w";
+    startX: number;
+    startY: number;
+    initBox: PhotoBox;
+  } | null>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
 
   // Device & Camera settings
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -211,6 +283,83 @@ export function AdminScreen({
     // Sessions
     loadSessions();
   }, []);
+
+  // Photo Box Drag & Resize Listeners
+  useEffect(() => {
+    if (!dragState) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      if (!previewContainerRef.current) return;
+      const rect = previewContainerRef.current.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+
+      const deltaX = ((e.clientX - dragState.startX) / rect.width) * 100;
+      const deltaY = ((e.clientY - dragState.startY) / rect.height) * 100;
+
+      setPhotoBoxes((prev) =>
+        prev.map((box) => {
+          if (box.id !== dragState.boxId) return box;
+          const init = dragState.initBox;
+
+          if (dragState.type === "move") {
+            const newX = Math.max(0, Math.min(100 - init.w, init.x + deltaX));
+            const newY = Math.max(0, Math.min(100 - init.h, init.y + deltaY));
+            return {
+              ...box,
+              x: Math.round(newX * 10) / 10,
+              y: Math.round(newY * 10) / 10,
+            };
+          } else if (dragState.type === "resize") {
+            let { x, y, w, h } = init;
+            const handle = dragState.handle;
+
+            if (handle?.includes("e")) {
+              w = Math.max(4, Math.min(100 - x, init.w + deltaX));
+            }
+            if (handle?.includes("s")) {
+              h = Math.max(4, Math.min(100 - y, init.h + deltaY));
+            }
+            if (handle?.includes("w")) {
+              const rawW = init.w - deltaX;
+              if (rawW >= 4) {
+                const newX = Math.max(0, init.x + deltaX);
+                w = init.x + init.w - newX;
+                x = newX;
+              }
+            }
+            if (handle?.includes("n")) {
+              const rawH = init.h - deltaY;
+              if (rawH >= 4) {
+                const newY = Math.max(0, init.y + deltaY);
+                h = init.y + init.h - newY;
+                y = newY;
+              }
+            }
+
+            return {
+              ...box,
+              x: Math.round(x * 10) / 10,
+              y: Math.round(y * 10) / 10,
+              w: Math.round(w * 10) / 10,
+              h: Math.round(h * 10) / 10,
+            };
+          }
+          return box;
+        })
+      );
+    };
+
+    const handlePointerUp = () => {
+      setDragState(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [dragState]);
 
   const loadSessions = async () => {
     setLoadingSessions(true);
@@ -582,6 +731,74 @@ export function AdminScreen({
     return { dataUrl, holes };
   };
 
+  // Bounded Chroma Erase: Erase color ONLY inside a specific photo box
+  const eraseColorInBox = (
+    canvas: HTMLCanvasElement,
+    box: PhotoBox,
+    targetHex: string,
+    tolerance: number
+  ): { dataUrl: string; holes: { x: number; y: number; w: number; h: number }[] } => {
+    const width = canvas.width;
+    const height = canvas.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return { dataUrl: canvas.toDataURL("image/png"), holes: [] };
+
+    // Calculate clamped box pixel bounds
+    const bx = Math.max(0, Math.min(width - 1, Math.round((box.x / 100) * width)));
+    const by = Math.max(0, Math.min(height - 1, Math.round((box.y / 100) * height)));
+    const bw = Math.max(1, Math.min(width - bx, Math.round((box.w / 100) * width)));
+    const bh = Math.max(1, Math.min(height - by, Math.round((box.h / 100) * height)));
+
+    const imgData = ctx.getImageData(bx, by, bw, bh);
+    const data = imgData.data;
+
+    const { r: tr, g: tg, b: tb } = hexToRgb(targetHex);
+    const maxDist = 441.67;
+    const threshold = (tolerance / 100) * maxDist;
+
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] === 0) continue;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+
+      const dr = r - tr;
+      const dg = g - tg;
+      const db = b - tb;
+      const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+
+      if (dist <= threshold) {
+        data[i + 3] = 0;
+      }
+    }
+
+    ctx.putImageData(imgData, bx, by);
+    const dataUrl = canvas.toDataURL("image/png");
+    const holes = detectHolesFromCanvas(canvas);
+    return { dataUrl, holes };
+  };
+
+  // Punch Box Hole: 100% clean transparent cutout inside the box
+  const punchBoxHole = (
+    canvas: HTMLCanvasElement,
+    box: PhotoBox
+  ): { dataUrl: string; holes: { x: number; y: number; w: number; h: number }[] } => {
+    const width = canvas.width;
+    const height = canvas.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return { dataUrl: canvas.toDataURL("image/png"), holes: [] };
+
+    const bx = Math.max(0, Math.min(width - 1, Math.round((box.x / 100) * width)));
+    const by = Math.max(0, Math.min(height - 1, Math.round((box.y / 100) * height)));
+    const bw = Math.max(1, Math.min(width - bx, Math.round((box.w / 100) * width)));
+    const bh = Math.max(1, Math.min(height - by, Math.round((box.h / 100) * height)));
+
+    ctx.clearRect(bx, by, bw, bh);
+    const dataUrl = canvas.toDataURL("image/png");
+    const holes = detectHolesFromCanvas(canvas);
+    return { dataUrl, holes };
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -618,8 +835,21 @@ export function AdminScreen({
 
           const holes = detectHolesFromCanvas(canvas);
           applyHolesToLayout(holes);
-          if (holes.length === 0) {
-            setActionStatus("💡 Lubang foto belum transparan. Klik kotak foto atau gunakan tombol di bawah.");
+          if (holes.length > 0) {
+            const boxes: PhotoBox[] = holes.map((h, i) => ({
+              id: `box_${i + 1}`,
+              x: Math.round((h.x / w) * 1000) / 10,
+              y: Math.round((h.y / h) * 1000) / 10,
+              w: Math.round((h.w / w) * 1000) / 10,
+              h: Math.round((h.h / h) * 1000) / 10,
+            }));
+            setPhotoBoxes(boxes);
+            setSelectedBoxId(boxes[0]?.id || null);
+          } else {
+            const defaultBoxes = getDefaultBoxesForLayout(newLayout);
+            setPhotoBoxes(defaultBoxes);
+            setSelectedBoxId(defaultBoxes[0]?.id || null);
+            setActionStatus("💡 Kotak foto siap diedit. Geser/ubah ukuran kotak, lalu lubangi atau hapus warna chroma.");
           }
         }
       };
@@ -696,6 +926,133 @@ export function AdminScreen({
     }
   };
 
+  // Punch hole in selected box
+  const handlePunchSelectedBox = () => {
+    if (!workingCanvasRef.current || !activeCanvasData || !selectedBoxId) return;
+    const box = photoBoxes.find((b) => b.id === selectedBoxId);
+    if (!box) return;
+
+    setHistoryStack((prev) => [...prev.slice(-9), activeCanvasData]);
+    const res = punchBoxHole(workingCanvasRef.current, box);
+    setActiveCanvasData(res.dataUrl);
+    applyHolesToLayout(res.holes);
+    const idx = photoBoxes.findIndex((b) => b.id === selectedBoxId);
+    setActionStatus(`✂️ Kotak Foto #${idx + 1} berhasil dilubangi transparan 100%!`);
+  };
+
+  // Punch hole in all boxes
+  const handlePunchAllBoxes = () => {
+    if (!workingCanvasRef.current || !activeCanvasData || photoBoxes.length === 0) return;
+    setHistoryStack((prev) => [...prev.slice(-9), activeCanvasData]);
+    let lastRes = { dataUrl: activeCanvasData, holes: detectedHoles };
+    photoBoxes.forEach((box) => {
+      if (workingCanvasRef.current) {
+        lastRes = punchBoxHole(workingCanvasRef.current, box);
+      }
+    });
+    setActiveCanvasData(lastRes.dataUrl);
+    applyHolesToLayout(lastRes.holes);
+    setActionStatus(`✂️ Semua (${photoBoxes.length}) kotak foto berhasil dilubangi transparan!`);
+  };
+
+  // Bounded chroma erase in selected box
+  const handleEraseChromaInSelectedBox = () => {
+    if (!workingCanvasRef.current || !activeCanvasData || !selectedBoxId) return;
+    const box = photoBoxes.find((b) => b.id === selectedBoxId);
+    if (!box) return;
+
+    setHistoryStack((prev) => [...prev.slice(-9), activeCanvasData]);
+    const res = eraseColorInBox(workingCanvasRef.current, box, chromaColor, chromaTolerance);
+    setActiveCanvasData(res.dataUrl);
+    applyHolesToLayout(res.holes);
+    const idx = photoBoxes.findIndex((b) => b.id === selectedBoxId);
+    setActionStatus(`🔒 Warna ${chromaColor} berhasil dihapus di dalam Kotak #${idx + 1} (area luar tetap utuh)!`);
+  };
+
+  // Bounded chroma erase in all boxes
+  const handleEraseChromaInAllBoxes = () => {
+    if (!workingCanvasRef.current || !activeCanvasData || photoBoxes.length === 0) return;
+    setHistoryStack((prev) => [...prev.slice(-9), activeCanvasData]);
+    let lastRes = { dataUrl: activeCanvasData, holes: detectedHoles };
+    photoBoxes.forEach((box) => {
+      if (workingCanvasRef.current) {
+        lastRes = eraseColorInBox(workingCanvasRef.current, box, chromaColor, chromaTolerance);
+      }
+    });
+    setActiveCanvasData(lastRes.dataUrl);
+    applyHolesToLayout(lastRes.holes);
+    setActionStatus(`🔒 Warna ${chromaColor} berhasil dihapus di dalam semua (${photoBoxes.length}) kotak foto (area luar tetap utuh)!`);
+  };
+
+  // Set aspect ratio of selected box
+  const setBoxRatio = (ratio: "1:1" | "3:4" | "4:3" | "9:16" | "2:3") => {
+    if (!selectedBoxId) return;
+    const aspectMultipliers: Record<string, number> = {
+      "1:1": 1,
+      "3:4": 4 / 3,
+      "4:3": 3 / 4,
+      "9:16": 16 / 9,
+      "2:3": 3 / 2,
+    };
+    const targetHOverW = aspectMultipliers[ratio] || 1;
+    const frameRatio = imageMeta ? imageMeta.width / imageMeta.height : 2 / 3;
+
+    setPhotoBoxes((prev) =>
+      prev.map((box) => {
+        if (box.id !== selectedBoxId) return box;
+        let newH = Math.round(box.w * frameRatio * targetHOverW * 10) / 10;
+        let newW = box.w;
+        if (newH + box.y > 100) {
+          newH = Math.min(95, 100 - box.y);
+          newW = Math.round((newH / (frameRatio * targetHOverW)) * 10) / 10;
+        }
+        return { ...box, w: Math.max(5, newW), h: Math.max(5, newH) };
+      })
+    );
+    setActionStatus(`Rasio kotak diubah ke ${ratio}`);
+  };
+
+  // Add a new photo box
+  const handleAddBox = () => {
+    const nextNum = photoBoxes.length + 1;
+    const newBox: PhotoBox = {
+      id: `box_${Date.now()}`,
+      x: 15,
+      y: Math.min(70, 10 + ((nextNum * 12) % 60)),
+      w: 45,
+      h: 25,
+    };
+    const updated = [...photoBoxes, newBox];
+    setPhotoBoxes(updated);
+    setSelectedBoxId(newBox.id);
+
+    // Auto sync layout to box count
+    if (updated.length === 1) setNewLayout("1x1");
+    else if (updated.length === 2) setNewLayout("2x1");
+    else if (updated.length === 3) setNewLayout("3x1");
+    else if (updated.length === 4) setNewLayout("2x2");
+    else if (updated.length === 6) setNewLayout("3x2");
+    else if (updated.length === 8) setNewLayout("4x2");
+    setActionStatus(`Ditambahkan Kotak Foto #${nextNum}`);
+  };
+
+  // Delete a box
+  const handleDeleteBox = (boxId: string) => {
+    const updated = photoBoxes.filter((b) => b.id !== boxId);
+    setPhotoBoxes(updated);
+    if (selectedBoxId === boxId) {
+      setSelectedBoxId(updated[0]?.id || null);
+    }
+    // Auto sync layout to box count
+    if (updated.length === 1) setNewLayout("1x1");
+    else if (updated.length === 2) setNewLayout("2x1");
+    else if (updated.length === 3) setNewLayout("3x1");
+    else if (updated.length === 4) setNewLayout("2x2");
+    else if (updated.length === 6) setNewLayout("3x2");
+    else if (updated.length === 8) setNewLayout("4x2");
+    setActionStatus(`Kotak foto dihapus.`);
+  };
+
   // Undo last erase action
   const handleUndo = () => {
     if (historyStack.length === 0 || !workingCanvasRef.current) return;
@@ -743,6 +1100,8 @@ export function AdminScreen({
     setActiveCanvasData("");
     setHistoryStack([]);
     setDetectedHoles([]);
+    setPhotoBoxes([]);
+    setSelectedBoxId(null);
     setUploadError("");
     setActionStatus("");
     setImageMeta(null);
@@ -756,17 +1115,30 @@ export function AdminScreen({
       setUploadError("Nama template bingkai harus diisi!");
       return;
     }
-    const finalImg = activeCanvasData || rawBase64Img;
-    if (!finalImg) {
+    if (!activeCanvasData && !rawBase64Img) {
       setUploadError("Gambar frame wajib diunggah!");
       return;
     }
 
+    // Auto-punch defined photo boxes if canvas doesn't have holes yet
+    if (workingCanvasRef.current && photoBoxes.length > 0) {
+      const currentHoles = detectHolesFromCanvas(workingCanvasRef.current);
+      if (currentHoles.length === 0) {
+        photoBoxes.forEach((box) => {
+          if (workingCanvasRef.current) {
+            punchBoxHole(workingCanvasRef.current, box);
+          }
+        });
+      }
+    }
+
+    const finalImg = workingCanvasRef.current?.toDataURL("image/png") || activeCanvasData || rawBase64Img;
+
     setIsSubmitting(true);
     try {
-      await onAddTemplate(newName.trim(), newLayout, newPreset, finalImg);
+      await onAddTemplate(newName.trim(), newLayout, "auto", finalImg);
       handleCloseUploadModal();
-      alert("✅ Bingkai berhasil ditambahkan ke Database!");
+      alert("✅ Bingkai berhasil ditambahkan dengan lubang foto kustom!");
     } catch (err) {
       console.error(err);
       setUploadError("Gagal menyimpan template bingkai.");
@@ -1748,19 +2120,112 @@ export function AdminScreen({
                     </div>
                   </div>
 
-                  {/* ─────── ALAT HAPUS WARNA & KOTAK FOTO (ALWAYS ACTIVE) ─────── */}
-                  <div className="p-4 rounded-xl border border-blue-100 bg-blue-50/30 space-y-3">
+                  {/* ─────── PENGATURAN BLOK & KOTAK FOTO (JUMLAH, BENTUK, RASIO) ─────── */}
+                  <div className="p-4 rounded-xl border border-blue-100 bg-blue-50/40 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs">
-                          <Sparkles className="w-4 h-4" />
+                          <Square className="w-4 h-4" />
                         </div>
                         <div>
                           <span className="text-xs font-bold text-slate-900 block leading-tight">
-                            Alat Penghapus Kotak & Warna Bingkai
+                            Pengaturan Kotak & Lubang Foto ({photoBoxes.length} Kotak)
                           </span>
                           <span className="text-[10px] text-slate-500 font-medium">
-                            Klik tombol cepat atau klik langsung pada kotak gambar di samping
+                            Geser, ubah ukuran, atau ganti rasio kotak foto di bawah
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleAddBox}
+                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Tambah Kotak</span>
+                      </button>
+                    </div>
+
+                    {/* Box Selector Pills */}
+                    {photoBoxes.length > 0 ? (
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                          {photoBoxes.map((box, idx) => {
+                            const isSelected = (selectedBoxId || photoBoxes[0]?.id) === box.id;
+                            return (
+                              <button
+                                key={box.id}
+                                type="button"
+                                onClick={() => setSelectedBoxId(box.id)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                                  isSelected
+                                    ? "bg-blue-600 text-white shadow-xs"
+                                    : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"
+                                }`}
+                              >
+                                <span>Kotak #{idx + 1}</span>
+                                <span className={`text-[10px] opacity-75`}>
+                                  ({Math.round(box.w)}% × {Math.round(box.h)}%)
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Selected Box Controls: Ratio Presets & Delete */}
+                        <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                              <span>Pilihan Rasio untuk Kotak #{photoBoxes.findIndex((b) => b.id === (selectedBoxId || photoBoxes[0]?.id)) + 1}:</span>
+                            </span>
+                            {photoBoxes.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteBox(selectedBoxId || photoBoxes[0]?.id)}
+                                className="text-red-600 hover:text-red-700 hover:bg-red-50 p-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                                title="Hapus kotak ini"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Hapus Kotak</span>
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-5 gap-1.5">
+                            {(["1:1", "3:4", "4:3", "9:16", "2:3"] as const).map((ratio) => (
+                              <button
+                                key={ratio}
+                                type="button"
+                                onClick={() => setBoxRatio(ratio)}
+                                className="px-2 py-1.5 bg-slate-50 hover:bg-blue-50 hover:text-blue-700 border border-slate-200 hover:border-blue-300 rounded-lg text-[11px] font-bold text-slate-700 transition-all text-center cursor-pointer"
+                              >
+                                {ratio}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-white/70 rounded-xl text-center text-xs text-slate-400">
+                        Belum ada kotak foto. Klik "Tambah Kotak" untuk memulai.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ─────── ALAT KUNCI CHROMA & LUBANG FOTO TERKUNCI (HANYA PADA KOTAK) ─────── */}
+                  <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+                          <Lock className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 block leading-tight">
+                            Kunci Chroma & Lubangi Kotak Foto
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            Warna hanya dihapus di dalam area kotak (desain frame luar 100% aman)
                           </span>
                         </div>
                       </div>
@@ -1790,55 +2255,110 @@ export function AdminScreen({
                       </div>
                     </div>
 
-                    {/* Quick 1-Click Action Buttons */}
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={handleEraseWhite}
-                        disabled={!activeCanvasData}
-                        className="p-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs hover:border-blue-400 cursor-pointer disabled:opacity-50"
-                      >
-                        <div className="w-5 h-5 rounded-full border-2 border-slate-300 bg-white shadow-xs"></div>
-                        <span className="text-[11px] font-bold text-slate-800 leading-tight text-center">Hapus Putih (Kotak Foto)</span>
-                        <span className="text-[9px] text-slate-400">1 Klik Semua Putih</span>
-                      </button>
+                    {/* Chroma Key Color Chooser */}
+                    <div className="space-y-1.5 pt-1">
+                      <label className="block text-[11px] font-semibold text-slate-700">
+                        Warna yang Ingin Dihapus (Kunci Chroma):
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setChromaColor("#FFFFFF")}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                            chromaColor.toUpperCase() === "#FFFFFF"
+                              ? "border-blue-500 bg-blue-50 text-blue-700 font-bold"
+                              : "border-slate-200 bg-white text-slate-700"
+                          }`}
+                        >
+                          <span className="w-3.5 h-3.5 rounded-full border border-slate-300 bg-white inline-block"></span>
+                          <span>Putih</span>
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={handleEraseGreen}
-                        disabled={!activeCanvasData}
-                        className="p-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs hover:border-emerald-400 cursor-pointer disabled:opacity-50"
-                      >
-                        <div className="w-5 h-5 rounded-full border border-emerald-400 bg-[#00FF00] shadow-xs"></div>
-                        <span className="text-[11px] font-bold text-slate-800 leading-tight text-center">Hapus Hijau (Chroma)</span>
-                        <span className="text-[9px] text-slate-400">1 Klik Green Screen</span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => setChromaColor("#00FF00")}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                            chromaColor.toUpperCase() === "#00FF00"
+                              ? "border-emerald-500 bg-emerald-50 text-emerald-700 font-bold"
+                              : "border-slate-200 bg-white text-slate-700"
+                          }`}
+                        >
+                          <span className="w-3.5 h-3.5 rounded-full border border-emerald-400 bg-[#00FF00] inline-block"></span>
+                          <span>Hijau</span>
+                        </button>
 
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <input
+                            type="color"
+                            value={chromaColor}
+                            onChange={(e) => setChromaColor(e.target.value)}
+                            className="w-7 h-7 rounded border border-slate-200 cursor-pointer p-0.5"
+                            title="Pilih warna kustom"
+                          />
+                          <span className="text-[11px] font-mono text-slate-600">{chromaColor}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Action Buttons: Bounded Chroma Erase & Direct Punch */}
+                    <div className="grid grid-cols-2 gap-2 pt-1">
                       <button
                         type="button"
-                        onClick={() => setToolMode(toolMode === "wand" ? "global" : "wand")}
-                        disabled={!activeCanvasData}
-                        className={`p-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs cursor-pointer border ${
-                          toolMode === "wand"
-                            ? "bg-blue-600 text-white border-blue-700 shadow-blue-500/20"
-                            : "bg-white text-slate-800 border-slate-200 hover:bg-slate-50"
-                        }`}
+                        onClick={handleEraseChromaInSelectedBox}
+                        disabled={!activeCanvasData || photoBoxes.length === 0}
+                        className="p-2.5 bg-white hover:bg-blue-50/50 border border-slate-200 hover:border-blue-400 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs cursor-pointer disabled:opacity-50 text-center"
                       >
-                        <Wand2 className={`w-5 h-5 ${toolMode === "wand" ? "text-white" : "text-blue-600"}`} />
-                        <span className="text-[11px] font-bold leading-tight text-center">Magic Wand</span>
-                        <span className={`text-[9px] ${toolMode === "wand" ? "text-blue-100" : "text-slate-400"}`}>
-                          {toolMode === "wand" ? "Aktif (Klik Kotak)" : "Klik di Gambar"}
+                        <Lock className="w-4 h-4 text-blue-600" />
+                        <span className="text-[11px] font-bold text-slate-800 leading-tight">
+                          Hapus Warna di Kotak #{photoBoxes.findIndex((b) => b.id === (selectedBoxId || photoBoxes[0]?.id)) + 1} Saja
                         </span>
+                        <span className="text-[9px] text-slate-400">Area Luar Kotak Utuh</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleEraseChromaInAllBoxes}
+                        disabled={!activeCanvasData || photoBoxes.length === 0}
+                        className="p-2.5 bg-white hover:bg-indigo-50/50 border border-slate-200 hover:border-indigo-400 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs cursor-pointer disabled:opacity-50 text-center"
+                      >
+                        <Lock className="w-4 h-4 text-indigo-600" />
+                        <span className="text-[11px] font-bold text-slate-800 leading-tight">
+                          Hapus Warna di Semua Kotak
+                        </span>
+                        <span className="text-[9px] text-slate-400">Di {photoBoxes.length} Kotak Foto</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handlePunchSelectedBox}
+                        disabled={!activeCanvasData || photoBoxes.length === 0}
+                        className="p-2.5 bg-white hover:bg-emerald-50/50 border border-slate-200 hover:border-emerald-400 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs cursor-pointer disabled:opacity-50 text-center"
+                      >
+                        <Scissors className="w-4 h-4 text-emerald-600" />
+                        <span className="text-[11px] font-bold text-slate-800 leading-tight">
+                          Lubangi Kotak #{photoBoxes.findIndex((b) => b.id === (selectedBoxId || photoBoxes[0]?.id)) + 1}
+                        </span>
+                        <span className="text-[9px] text-emerald-600 font-semibold">100% Bersih & Transparan</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handlePunchAllBoxes}
+                        disabled={!activeCanvasData || photoBoxes.length === 0}
+                        className="p-2.5 bg-white hover:bg-emerald-50/50 border border-slate-200 hover:border-emerald-400 rounded-xl flex flex-col items-center justify-center gap-1 transition-all shadow-2xs cursor-pointer disabled:opacity-50 text-center"
+                      >
+                        <Scissors className="w-4 h-4 text-emerald-600" />
+                        <span className="text-[11px] font-bold text-slate-800 leading-tight">
+                          Lubangi Semua Kotak Sekaligus
+                        </span>
+                        <span className="text-[9px] text-emerald-600 font-semibold">Semua Kotak Transparan</span>
                       </button>
                     </div>
 
                     {/* Mode & Tolerance Slider */}
                     <div className="pt-2 border-t border-slate-200/80 space-y-2">
                       <div className="flex items-center justify-between text-[11px]">
-                        <span className="font-semibold text-slate-700 flex items-center gap-1">
-                          <span>Toleransi Kepekaan Warna</span>
-                          <span className="text-[10px] text-slate-400">(Geser jika warna kurang bersih terhapus)</span>
-                        </span>
+                        <span className="font-semibold text-slate-700">Toleransi Kepekaan Warna Chroma:</span>
                         <span className="font-mono font-bold text-blue-600">{chromaTolerance}%</span>
                       </div>
                       <input
@@ -1868,19 +2388,19 @@ export function AdminScreen({
                 </form>
               </div>
 
-              {/* ─────── RIGHT COLUMN: Interactive Live Preview & Simulation ─────── */}
+              {/* ─────── RIGHT COLUMN: Interactive Live Preview & Photo Box Editor ─────── */}
               <div className="lg:col-span-6 p-6 bg-slate-50/50 flex flex-col justify-between space-y-4">
                 {/* Preview Controls Header */}
                 <div className="flex items-center justify-between">
                   <div>
                     <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                       <Eye className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Pratinjau Live Bingkai</span>
+                      <span>Pratinjau & Editor Blok Foto</span>
                     </h4>
                     <span className="text-[10px] text-slate-400">
-                      {detectedHoles.length > 0
-                        ? `🎉 ${detectedHoles.length} Lubang Transparan Terdeteksi`
-                        : "Klik kotak pada gambar untuk melubanginya"}
+                      {activeCanvasData
+                        ? `✨ ${photoBoxes.length} Blok Kotak Foto Terpasang (Bisa Digeser & Ditarik Ukurannya)`
+                        : "Unggah bingkai di sebelah kiri untuk mulai mengedit"}
                     </span>
                   </div>
 
@@ -1911,73 +2431,54 @@ export function AdminScreen({
                   </div>
                 </div>
 
-                {/* Live Preview Display Box */}
+                {/* Live Preview & Interactive Box Editor Canvas */}
                 <div
-                  onClick={handlePreviewImageClick}
-                  className={`relative w-full aspect-[2/3] max-h-[400px] mx-auto rounded-2xl overflow-hidden border border-slate-200/90 shadow-sm flex items-center justify-center select-none ${
-                    activeCanvasData ? "cursor-crosshair" : ""
-                  } ${
+                  ref={previewContainerRef}
+                  style={{
+                    aspectRatio: imageMeta ? `${imageMeta.width} / ${imageMeta.height}` : "2 / 3",
+                  }}
+                  className={`relative w-full max-h-[440px] mx-auto rounded-2xl overflow-hidden border border-slate-200 shadow-sm flex items-center justify-center select-none ${
                     previewTab === "checkerboard"
                       ? "bg-[repeating-conic-gradient(#cbd5e1_0_25%,#fff_0_50%)] bg-[length:14px_14px]"
                       : "bg-slate-900"
                   }`}
-                  title={activeCanvasData ? "Klik di bagian kotak untuk melubangi dengan Magic Wand" : undefined}
                 >
-                  {/* Photo Simulation Layer: Render sample photos directly inside detected holes! */}
+                  {/* Photo Simulation Layer: Render sample photos inside photo boxes */}
                   {previewTab === "photos" && (
-                    <div className="absolute inset-0 z-0 p-3 pointer-events-none">
-                      {detectedHoles.length > 0 ? (
-                        // Render photos directly positioned inside the detected holes
-                        detectedHoles.map((hole, i) => {
-                          const totalW = imageMeta?.width || 1200;
-                          const totalH = imageMeta?.height || 1800;
-                          const leftPct = (hole.x / totalW) * 100;
-                          const topPct = (hole.y / totalH) * 100;
-                          const widthPct = (hole.w / totalW) * 100;
-                          const heightPct = (hole.h / totalH) * 100;
+                    <div className="absolute inset-0 z-0 pointer-events-none">
+                      {photoBoxes.map((box, i) => {
+                        const colors = [
+                          "from-sky-400 to-indigo-600",
+                          "from-pink-400 to-rose-600",
+                          "from-amber-400 to-orange-500",
+                          "from-emerald-400 to-teal-600",
+                          "from-purple-500 to-indigo-600",
+                          "from-cyan-400 to-blue-600",
+                          "from-fuchsia-400 to-pink-600",
+                          "from-yellow-400 to-amber-600",
+                        ];
+                        const colorClass = colors[i % colors.length];
 
-                          const colors = [
-                            "from-sky-400 to-indigo-600",
-                            "from-pink-400 to-rose-600",
-                            "from-amber-400 to-orange-500",
-                            "from-emerald-400 to-teal-600",
-                            "from-purple-500 to-indigo-600",
-                            "from-cyan-400 to-blue-600",
-                            "from-fuchsia-400 to-pink-600",
-                            "from-yellow-400 to-amber-600",
-                          ];
-                          const colorClass = colors[i % colors.length];
-
-                          return (
-                            <div
-                              key={i}
-                              className={`absolute rounded-xl bg-gradient-to-tr ${colorClass} flex flex-col items-center justify-center text-white shadow-inner opacity-95`}
-                              style={{
-                                left: `${leftPct}%`,
-                                top: `${topPct}%`,
-                                width: `${widthPct}%`,
-                                height: `${heightPct}%`,
-                              }}
-                            >
-                              <Camera className="w-5 h-5 mb-0.5 opacity-90" />
-                              <span className="text-[10px] font-bold">Foto #{i + 1}</span>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        // Fallback grid when holes aren't transparent yet
-                        <div className="w-full h-full flex flex-col items-center justify-center text-white/70 p-4 text-center">
-                          <Camera className="w-8 h-8 mb-2 opacity-50" />
-                          <p className="text-xs font-bold">Kotak foto belum berlubang transparan</p>
-                          <p className="text-[10px] text-white/60 mt-1 max-w-[220px]">
-                            Gunakan tombol "Hapus Putih" atau klik kotak foto pada tab Transparansi
-                          </p>
-                        </div>
-                      )}
+                        return (
+                          <div
+                            key={box.id}
+                            className={`absolute rounded-lg bg-gradient-to-tr ${colorClass} flex flex-col items-center justify-center text-white shadow-inner opacity-95`}
+                            style={{
+                              left: `${box.x}%`,
+                              top: `${box.y}%`,
+                              width: `${box.w}%`,
+                              height: `${box.h}%`,
+                            }}
+                          >
+                            <Camera className="w-5 h-5 mb-0.5 opacity-90" />
+                            <span className="text-[10px] font-bold">Foto #{i + 1}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
 
-                  {/* Frame Image Layer (Overlaid on top) */}
+                  {/* Frame Image Layer */}
                   {activeCanvasData ? (
                     <div className="relative w-full h-full z-10 flex items-center justify-center pointer-events-none">
                       <img
@@ -1986,38 +2487,154 @@ export function AdminScreen({
                         alt="Frame Preview"
                         className="w-full h-full object-contain"
                       />
-
-                      {/* Wand Hint Banner */}
-                      {previewTab === "checkerboard" && (
-                        <div className="absolute bottom-2 left-2 right-2 bg-slate-900/80 backdrop-blur-xs text-white text-[10px] font-medium py-1 px-2.5 rounded-lg shadow-md text-center">
-                          🪄 Klik kotak foto untuk melubanginya secara instan
-                        </div>
-                      )}
                     </div>
                   ) : (
                     <div className="p-6 text-center space-y-2 text-slate-400 z-10">
                       <ImageIcon className="w-12 h-12 mx-auto opacity-40" />
                       <p className="text-xs font-semibold text-slate-600">Belum ada gambar dipilih</p>
-                      <p className="text-[11px] text-slate-400 max-w-[200px] mx-auto">
-                        Pilih berkas frame di sebelah kiri untuk melihat pratinjau live
+                      <p className="text-[11px] text-slate-400 max-w-[220px] mx-auto">
+                        Pilih berkas frame di sebelah kiri untuk melihat pratinjau dan mengatur kotak foto
                       </p>
+                    </div>
+                  )}
+
+                  {/* Interactive Draggable & Resizable Photo Boxes Overlay */}
+                  {activeCanvasData && (
+                    <div className="absolute inset-0 z-20 pointer-events-auto">
+                      {photoBoxes.map((box, idx) => {
+                        const isSelected = (selectedBoxId || photoBoxes[0]?.id) === box.id;
+                        return (
+                          <div
+                            key={box.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedBoxId(box.id);
+                            }}
+                            onPointerDown={(e) => {
+                              e.stopPropagation();
+                              setSelectedBoxId(box.id);
+                              setDragState({
+                                type: "move",
+                                boxId: box.id,
+                                startX: e.clientX,
+                                startY: e.clientY,
+                                initBox: { ...box },
+                              });
+                            }}
+                            style={{
+                              left: `${box.x}%`,
+                              top: `${box.y}%`,
+                              width: `${box.w}%`,
+                              height: `${box.h}%`,
+                            }}
+                            className={`absolute cursor-move border-2 transition-colors select-none rounded-lg flex flex-col items-center justify-between p-1.5 ${
+                              isSelected
+                                ? "border-blue-500 bg-blue-500/20 ring-2 ring-blue-400/60 shadow-lg z-30"
+                                : "border-indigo-400/80 bg-indigo-500/10 hover:border-blue-400 z-20"
+                            }`}
+                          >
+                            {/* Header Badge */}
+                            <div className="w-full flex items-center justify-between pointer-events-none">
+                              <span className="px-1.5 py-0.5 rounded bg-blue-600 text-white font-bold text-[9px] shadow-xs">
+                                #{idx + 1}
+                              </span>
+                              {isSelected && (
+                                <span className="text-[8px] bg-slate-900/80 text-white px-1 py-0.5 rounded font-mono">
+                                  {Math.round(box.w)}% × {Math.round(box.h)}%
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Center label */}
+                            <div className="pointer-events-none text-center">
+                              <Camera className={`w-3.5 h-3.5 mx-auto ${isSelected ? "text-blue-700" : "text-slate-600"}`} />
+                              <span className={`text-[9px] font-bold ${isSelected ? "text-blue-800" : "text-slate-700"}`}>
+                                Foto #{idx + 1}
+                              </span>
+                            </div>
+
+                            <div className="w-full h-1" />
+
+                            {/* Resize Handles when selected */}
+                            {isSelected && (
+                              <>
+                                {/* Corners */}
+                                <div
+                                  onPointerDown={(e) => {
+                                    e.stopPropagation();
+                                    setDragState({
+                                      type: "resize",
+                                      boxId: box.id,
+                                      handle: "nw",
+                                      startX: e.clientX,
+                                      startY: e.clientY,
+                                      initBox: { ...box },
+                                    });
+                                  }}
+                                  className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-blue-600 rounded-full cursor-nwse-resize z-40 shadow-xs"
+                                  title="Tarik sudut untuk ubah ukuran"
+                                />
+                                <div
+                                  onPointerDown={(e) => {
+                                    e.stopPropagation();
+                                    setDragState({
+                                      type: "resize",
+                                      boxId: box.id,
+                                      handle: "ne",
+                                      startX: e.clientX,
+                                      startY: e.clientY,
+                                      initBox: { ...box },
+                                    });
+                                  }}
+                                  className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-blue-600 rounded-full cursor-nesw-resize z-40 shadow-xs"
+                                  title="Tarik sudut untuk ubah ukuran"
+                                />
+                                <div
+                                  onPointerDown={(e) => {
+                                    e.stopPropagation();
+                                    setDragState({
+                                      type: "resize",
+                                      boxId: box.id,
+                                      handle: "sw",
+                                      startX: e.clientX,
+                                      startY: e.clientY,
+                                      initBox: { ...box },
+                                    });
+                                  }}
+                                  className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 bg-white border-2 border-blue-600 rounded-full cursor-nesw-resize z-40 shadow-xs"
+                                  title="Tarik sudut untuk ubah ukuran"
+                                />
+                                <div
+                                  onPointerDown={(e) => {
+                                    e.stopPropagation();
+                                    setDragState({
+                                      type: "resize",
+                                      boxId: box.id,
+                                      handle: "se",
+                                      startX: e.clientX,
+                                      startY: e.clientY,
+                                      initBox: { ...box },
+                                    });
+                                  }}
+                                  className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-blue-600 rounded-full cursor-nwse-resize z-40 shadow-xs"
+                                  title="Tarik sudut untuk ubah ukuran"
+                                />
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
 
-                {/* Preview Meta / Status */}
+                {/* Helper / Status Footer */}
                 <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
                   <div className="flex items-center gap-1.5">
-                    {detectedHoles.length > 0 ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-md font-semibold border border-emerald-200">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>{detectedHoles.length} Lubang Foto Siap</span>
-                      </span>
-                    ) : (
-                      <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md font-medium border border-amber-200">
-                        0 Lubang Transparan
-                      </span>
-                    )}
+                    <span className="inline-flex items-center gap-1 text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-md font-semibold border border-blue-200">
+                      <Move className="w-3.5 h-3.5" />
+                      <span>{photoBoxes.length} Blok Kotak Foto Terpasang</span>
+                    </span>
                   </div>
 
                   <span className="text-slate-500 font-semibold">
@@ -2030,13 +2647,13 @@ export function AdminScreen({
             {/* Modal Footer: Action Buttons */}
             <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between shrink-0">
               <div className="text-xs text-slate-500">
-                {detectedHoles.length > 0 ? (
+                {photoBoxes.length > 0 ? (
                   <span className="text-emerald-700 font-semibold">
-                    ✅ Bingkai siap digunakan dengan {detectedHoles.length} foto!
+                    ✅ Siap! Foto pengunjung akan masuk pas ke dalam {photoBoxes.length} kotak yang sudah diatur.
                   </span>
                 ) : (
                   <span className="text-slate-500">
-                    💡 Tip: Lubangi semua kotak foto agar hasil foto terlihat di dalam bingkai.
+                    💡 Tip: Atur posisi dan bentuk kotak foto agar hasil foto terlihat sempurna di dalam bingkai.
                   </span>
                 )}
               </div>
@@ -2051,7 +2668,7 @@ export function AdminScreen({
                 <button
                   type="submit"
                   form="frame-upload-form"
-                  disabled={isSubmitting || !newName || !activeCanvasData}
+                  disabled={isSubmitting || !newName || (!activeCanvasData && !rawBase64Img)}
                   className="px-6 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-blue-600/20 transition-all disabled:opacity-50 cursor-pointer"
                 >
                   {isSubmitting ? "Menyimpan ke Cloud..." : "Simpan Bingkai"}

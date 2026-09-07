@@ -2103,10 +2103,10 @@ function ResultScreen({
             })
           );
 
-          // 4. Generate & upload GIF 12s (foto murni tanpa frame, rasio asli kamera)
+          // 4. Generate & upload GIF 12s HD (foto murni tanpa frame, rasio asli kamera)
           const uploadGifPromise = (async () => {
             try {
-              const gifBase64 = await generateGifFromPhotos(photos, 640, 500, 12000);
+              const gifBase64 = await generateGifFromPhotos(photos, 960, 500, 12000);
               if (gifBase64) {
                 try {
                   return await uploadToStorage(gifBase64, `photos/${sessionCode}_animation.gif`, "image/gif");

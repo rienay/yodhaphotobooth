@@ -12,11 +12,11 @@ function loadImg(src: string): Promise<HTMLImageElement> {
 }
 
 /**
- * Generate animated GIF from photos array with dimensions matching camera aspect ratio
+ * Generate animated GIF from photos array with dimensions matching camera aspect ratio in HD quality
  */
 export async function generateGifFromPhotos(
   photos: string[],
-  maxDimension = 640,
+  maxDimension = 960, // HD Quality
   delay = 500,
   targetDurationMs = 12000 // 12 seconds total duration
 ): Promise<string> {
