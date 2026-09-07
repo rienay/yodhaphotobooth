@@ -39,6 +39,7 @@ import {
   Square,
   Move,
   Lock,
+  Clock,
 } from "lucide-react";
 
 export interface Template {
@@ -240,6 +241,11 @@ export function AdminScreen({
   const [selectedDevice, setSelectedDevice] = useState<string>("");
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
+  const [cameraZoom, setCameraZoom] = useState<number>(() => {
+    if (typeof window === "undefined") return 0.85;
+    const saved = localStorage.getItem("yodha_camera_zoom");
+    return saved ? parseFloat(saved) : 0.85;
+  });
 
   // Database status
   const [dbConfigured, setDbConfigured] = useState<boolean>(isSupabaseConfigured());
@@ -290,6 +296,13 @@ export function AdminScreen({
     // Camera setting
     settingsDB.getSetting<string>("camera_device_id", "").then((val) => {
       setSelectedDevice(val || localStorage.getItem("yodha_camera_device_id") || "");
+    });
+
+    // Camera zoom setting
+    settingsDB.getSetting<number>("camera_zoom", 0.85).then((val) => {
+      if (typeof val === "number" && !isNaN(val)) {
+        setCameraZoom(val);
+      }
     });
 
     // Admin PIN
@@ -379,7 +392,9 @@ export function AdminScreen({
   const loadSessions = async () => {
     setLoadingSessions(true);
     try {
-      const data = await sessionDB.getRecentSessions(40);
+      // Auto-cleanup any sessions older than 30 days
+      await sessionDB.cleanupOldSessions(30);
+      const data = await sessionDB.getRecentSessions(50);
       setRecentSessions(data);
     } catch (e) {
       console.error(e);
@@ -392,7 +407,9 @@ export function AdminScreen({
   useEffect(() => {
     if (activeNav === "devices") {
       const constraints: MediaStreamConstraints = {
-        video: selectedDevice ? { deviceId: { exact: selectedDevice } } : true,
+        video: selectedDevice
+          ? { deviceId: { exact: selectedDevice }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+          : { width: { ideal: 1920 }, height: { ideal: 1080 } },
       };
       navigator.mediaDevices?.getUserMedia(constraints)
         .then((stream) => {
@@ -422,6 +439,13 @@ export function AdminScreen({
     } else {
       localStorage.removeItem("yodha_camera_device_id");
     }
+  };
+
+  const handleZoomChange = (val: number) => {
+    const clamped = Math.max(0.65, Math.min(1.35, Math.round(val * 100) / 100));
+    setCameraZoom(clamped);
+    settingsDB.saveSetting("camera_zoom", clamped);
+    localStorage.setItem("yodha_camera_zoom", String(clamped));
   };
 
   const handleTestDB = async () => {
@@ -1984,21 +2008,52 @@ export function AdminScreen({
           {/* ──────────────── TAB 3: GALERI FOTO SESI ──────────────── */}
           {activeNav === "gallery" && (
             <div className="space-y-6 max-w-7xl mx-auto">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-3">
                 <div>
-                  <h2 className="text-xl font-bold text-slate-900">Galeri Riwayat Sesi Foto</h2>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h2 className="text-xl font-bold text-slate-900">Galeri Riwayat Sesi Foto</h2>
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <Clock className="w-3 h-3 text-emerald-600" />
+                      <span>Hapus Otomatis 30 Hari Aktif</span>
+                    </span>
+                  </div>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Hasil pemotretan pengunjung yang tersimpan secara aman di Cloud Storage Supabase
+                    Hasil pemotretan pengunjung tersimpan aman di Cloud Storage dan otomatis dibersihkan setiap 30 hari.
                   </p>
                 </div>
-                <button
-                  onClick={loadSessions}
-                  disabled={loadingSessions}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-colors cursor-pointer"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${loadingSessions ? "animate-spin" : ""}`} />
-                  <span>Segarkan</span>
-                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setLoadingSessions(true);
+                      const deleted = await sessionDB.cleanupOldSessions(30);
+                      const data = await sessionDB.getRecentSessions(50);
+                      setRecentSessions(data);
+                      setLoadingSessions(false);
+                      setActionStatus(
+                        deleted > 0
+                          ? `🧹 Berhasil menghapus ${deleted} foto sesi yang berusia lebih dari 30 hari.`
+                          : "✅ Seluruh foto masih dalam masa retensi (kurang dari 30 hari)."
+                      );
+                    }}
+                    disabled={loadingSessions}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-colors cursor-pointer"
+                    title="Pindai dan hapus foto yang sudah lewat dari 30 hari"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                    <span>Bersihkan &gt; 30 Hari</span>
+                  </button>
+
+                  <button
+                    onClick={loadSessions}
+                    disabled={loadingSessions}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingSessions ? "animate-spin" : ""}`} />
+                    <span>Segarkan</span>
+                  </button>
+                </div>
               </div>
 
               {recentSessions.length === 0 ? (
@@ -2106,19 +2161,80 @@ export function AdminScreen({
 
                 {/* Live Video Preview Box */}
                 <div className="space-y-2 pt-2">
-                  <span className="text-xs font-semibold text-slate-700 block">Pratinjau Langsung (Live Viewfinder):</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-700 block">Pratinjau Langsung (Live Viewfinder):</span>
+                    <span className="text-[11px] text-slate-500 font-mono">Zoom Aktif: {cameraZoom.toFixed(2)}x</span>
+                  </div>
                   <div className="aspect-video bg-slate-900 rounded-2xl overflow-hidden flex items-center justify-center relative border border-slate-800 shadow-inner">
                     <video
                       ref={videoPreviewRef}
                       autoPlay
                       playsInline
                       muted
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover transition-transform duration-150"
+                      style={{
+                        transform: `scaleX(-1) scale(${cameraZoom})`,
+                        transformOrigin: "center center",
+                      }}
                     />
                     <div className="absolute top-3 left-3 bg-black/60 text-white text-[10px] px-2 py-1 rounded-md font-mono flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                      <span>Live Stream</span>
+                      <span>Live Stream (16:9 Widescreen)</span>
                     </div>
+                  </div>
+                </div>
+
+                {/* Camera Zoom / Field of View (FOV) Slider */}
+                <div className="space-y-3 pt-4 border-t border-slate-100">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-800">
+                        Sudut Pandang / Zoom Kamera (Field of View)
+                      </label>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Turunkan zoom (misal ke 0.80x atau 0.85x) agar tangkapan kamera lebih luas (wide) dan wajah tidak terlalu dekat/terpotong.
+                      </p>
+                    </div>
+                    <span className="font-mono font-bold text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg border border-blue-200">
+                      {cameraZoom.toFixed(2)}x {cameraZoom < 1.0 ? "(Wide / Luas)" : cameraZoom === 1.0 ? "(Standar 1:1)" : "(Zoom Dekat)"}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-semibold text-slate-500 shrink-0">0.70x (Sangat Luas)</span>
+                    <input
+                      type="range"
+                      min="0.70"
+                      max="1.30"
+                      step="0.05"
+                      value={cameraZoom}
+                      onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
+                      className="w-full accent-blue-600 h-2 bg-slate-200 rounded-lg cursor-pointer"
+                    />
+                    <span className="text-xs font-semibold text-slate-500 shrink-0">1.30x (Dekat)</span>
+                  </div>
+
+                  {/* Preset Buttons */}
+                  <div className="flex items-center gap-2 pt-1 flex-wrap">
+                    {[
+                      { label: "🔍 0.80x (Ultra Wide)", val: 0.80 },
+                      { label: "📸 0.85x (Wide Rekomendasi)", val: 0.85 },
+                      { label: "✨ 1.00x (Standar Kamera)", val: 1.00 },
+                      { label: "🔎 1.15x (Zoom Sedang)", val: 1.15 },
+                    ].map((p) => (
+                      <button
+                        key={p.val}
+                        type="button"
+                        onClick={() => handleZoomChange(p.val)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                          Math.abs(cameraZoom - p.val) < 0.02
+                            ? "bg-blue-600 text-white border-blue-700 shadow-xs"
+                            : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
               </div>

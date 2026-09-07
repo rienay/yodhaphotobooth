@@ -106,3 +106,23 @@ CREATE POLICY "Public update photobooth storage" ON storage.objects FOR UPDATE U
 
 DROP POLICY IF EXISTS "Public delete photobooth storage" ON storage.objects;
 CREATE POLICY "Public delete photobooth storage" ON storage.objects FOR DELETE USING (bucket_id = 'photobooth');
+
+
+-- 5. FUNCTION AUTO-DELETE / RETENSI SESI FOTO 30 HARI
+-- Menghapus seluruh sesi foto pengunjung yang usianya sudah lebih dari 30 hari secara otomatis
+CREATE OR REPLACE FUNCTION public.cleanup_old_photobooth_sessions(days_retention INTEGER DEFAULT 30)
+RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM public.photobooth_sessions
+    WHERE created_at < (NOW() - (days_retention || ' days')::INTERVAL);
+    
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Beri izin eksekusi function jika dipanggil via RPC dari frontend
+GRANT EXECUTE ON FUNCTION public.cleanup_old_photobooth_sessions(INTEGER) TO anon, authenticated, service_role;
+

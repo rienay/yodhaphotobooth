@@ -1127,6 +1127,12 @@ function FilterScreen({
 
   const activeFilter = PHOTO_FILTERS.find(f => f.id === selectedFilter) || PHOTO_FILTERS[0];
 
+  const [cameraZoom] = useState<number>(() => {
+    if (typeof window === "undefined") return 0.85;
+    const saved = localStorage.getItem("yodha_camera_zoom");
+    return saved ? parseFloat(saved) : 0.85;
+  });
+
   useEffect(() => {
     let cancelled = false;
     async function init() {
@@ -1134,9 +1140,10 @@ function FilterScreen({
         const selectedDeviceId = localStorage.getItem("yodha_camera_device_id");
         let stream: MediaStream;
         try {
+          // Request 16:9 Full HD widescreen so webcams don't crop/zoom in to 4:3
           const videoConstraints: MediaTrackConstraints = selectedDeviceId
-            ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 960 } }
-            : { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } };
+            ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 1.7777777778 } }
+            : { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 1.7777777778 } };
           stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
         } catch (e1) {
           stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
@@ -1181,7 +1188,8 @@ function FilterScreen({
             muted
             className="w-full h-full object-cover transition-all duration-300"
             style={{
-              transform: "scaleX(-1)",
+              transform: `scaleX(-1) scale(${cameraZoom})`,
+              transformOrigin: "center center",
               filter: activeFilter.css,
             }}
           />
@@ -1431,6 +1439,12 @@ function ShootScreen({
     };
   }, [overlaySrc, activeTemplate, layout, variantConfig]);
 
+  const [cameraZoom, setCameraZoom] = useState<number>(() => {
+    if (typeof window === "undefined") return 0.85;
+    const saved = localStorage.getItem("yodha_camera_zoom");
+    return saved ? parseFloat(saved) : 0.85;
+  });
+
   useEffect(() => {
     let cancelled = false;
     async function init() {
@@ -1438,9 +1452,10 @@ function ShootScreen({
         const selectedDeviceId = localStorage.getItem("yodha_camera_device_id");
         let stream: MediaStream;
         try {
+          // Request 16:9 Full HD widescreen so webcams don't crop/zoom in to 4:3
           const videoConstraints: MediaTrackConstraints = selectedDeviceId
-            ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 960 } }
-            : { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } };
+            ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 1.7777777778 } }
+            : { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 1.7777777778 } };
           stream = await navigator.mediaDevices.getUserMedia({
             video: videoConstraints,
             audio: false,
@@ -1449,7 +1464,7 @@ function ShootScreen({
           console.warn("Gagal membuka kamera pilihan, kembali ke kamera default:", err);
           try {
             stream = await navigator.mediaDevices.getUserMedia({
-              video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } },
+              video: { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } },
               audio: false,
             });
           } catch (err2) {
@@ -1481,20 +1496,30 @@ function ShootScreen({
     const video = videoRef.current;
     if (!video) return null;
     const canvas = document.createElement("canvas");
-    const w = video.videoWidth || 1280;
-    const h = video.videoHeight || 960;
+    const w = video.videoWidth || 1920;
+    const h = video.videoHeight || 1080;
 
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
+
+    // Flip horizontally for natural selfie view
     ctx.translate(w, 0); ctx.scale(-1, 1);
     const filterObj = PHOTO_FILTERS.find(f => f.id === selectedFilter);
     if (filterObj && filterObj.css && filterObj.css !== "none") {
       ctx.filter = filterObj.css;
     }
+
+    // Apply digital zoom scale if adjusted
+    if (cameraZoom !== 1.0) {
+      ctx.translate(w / 2, h / 2);
+      ctx.scale(cameraZoom, cameraZoom);
+      ctx.translate(-w / 2, -h / 2);
+    }
+
     ctx.drawImage(video, 0, 0, w, h);
     return canvas.toDataURL("image/jpeg", 0.95);
-  }, [selectedFilter]);
+  }, [selectedFilter, cameraZoom]);
 
   const runSequence = useCallback(async () => {
     if (shooting) return;
@@ -1551,9 +1576,10 @@ function ShootScreen({
           ref={videoRef}
           playsInline
           muted
-          className="absolute inset-0 w-full h-full object-cover"
+          className="absolute inset-0 w-full h-full object-cover transition-transform duration-200"
           style={{
-            transform: "scaleX(-1)",
+            transform: `scaleX(-1) scale(${cameraZoom})`,
+            transformOrigin: "center center",
             filter: PHOTO_FILTERS.find(f => f.id === selectedFilter)?.css || "none",
           }}
         />
@@ -1607,9 +1633,9 @@ function ShootScreen({
         </div>
       )}
 
-      {/* ── TOP-LEFT: Live + status ── */}
+      {/* ── TOP-LEFT: Live + status + Quick Zoom Controls ── */}
       <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded" style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)" }}>
             <span className="w-2.5 h-2.5 bg-red-500 heart-blink rounded-full" />
             <span className="pixel text-white text-[9px]">LIVE</span>
@@ -1623,6 +1649,50 @@ function ShootScreen({
             <span>{isFullscreen ? "⊠" : "⊡"}</span>
             <span>{isFullscreen ? "KELUAR PENUH" : "LAYAR PENUH"}</span>
           </button>
+
+          {/* Quick Zoom / FOV Controller Pill */}
+          <div
+            className="flex items-center gap-1 px-2 py-1 rounded"
+            style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)" }}
+          >
+            <span className="pixel text-white/80 text-[8px] mr-0.5">ZOOM:</span>
+            <button
+              type="button"
+              onClick={() => {
+                const next = Math.max(0.65, Math.round((cameraZoom - 0.05) * 100) / 100);
+                setCameraZoom(next);
+                localStorage.setItem("yodha_camera_zoom", String(next));
+              }}
+              className="w-5 h-5 rounded bg-white/15 hover:bg-white/30 active:scale-95 text-white text-[11px] font-bold flex items-center justify-center cursor-pointer"
+              title="Perluas Pandangan (Zoom Out / Wide)"
+            >
+              -
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const next = cameraZoom < 0.85 ? 1.0 : cameraZoom > 1.05 ? 0.8 : 0.85;
+                setCameraZoom(next);
+                localStorage.setItem("yodha_camera_zoom", String(next));
+              }}
+              className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-amber-300 font-mono text-[9px] font-bold cursor-pointer"
+              title="Ganti Mode Wide (0.85x) / Normal (1.0x)"
+            >
+              {cameraZoom.toFixed(2)}x
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const next = Math.min(1.35, Math.round((cameraZoom + 0.05) * 100) / 100);
+                setCameraZoom(next);
+                localStorage.setItem("yodha_camera_zoom", String(next));
+              }}
+              className="w-5 h-5 rounded bg-white/15 hover:bg-white/30 active:scale-95 text-white text-[11px] font-bold flex items-center justify-center cursor-pointer"
+              title="Perdekat (Zoom In)"
+            >
+              +
+            </button>
+          </div>
         </div>
         <div className="px-3 py-1.5 rounded w-fit" style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)" }}>
           <span className="pixel text-white text-[9px]">{statusText()}</span>
@@ -1830,8 +1900,8 @@ function ReviewScreen({
         let stream: MediaStream;
         try {
           const videoConstraints: MediaTrackConstraints = selectedDeviceId
-            ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 960 } }
-            : { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 960 } };
+            ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 1.7777777778 } }
+            : { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 }, aspectRatio: { ideal: 1.7777777778 } };
           stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
         } catch (e1) {
           stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
@@ -1874,8 +1944,8 @@ function ReviewScreen({
 
     const video = retakeVideoRef.current;
     const canvas = document.createElement("canvas");
-    const w = video.videoWidth || 1280;
-    const h = video.videoHeight || 960;
+    const w = video.videoWidth || 1920;
+    const h = video.videoHeight || 1080;
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext("2d");
@@ -1884,6 +1954,12 @@ function ReviewScreen({
       ctx.scale(-1, 1);
       if (activeFilter.css && activeFilter.css !== "none") {
         ctx.filter = activeFilter.css;
+      }
+      const savedZoom = parseFloat(localStorage.getItem("yodha_camera_zoom") || "0.85") || 0.85;
+      if (savedZoom !== 1.0) {
+        ctx.translate(w / 2, h / 2);
+        ctx.scale(savedZoom, savedZoom);
+        ctx.translate(-w / 2, -h / 2);
       }
       ctx.drawImage(video, 0, 0, w, h);
       const newShot = canvas.toDataURL("image/jpeg", 0.95);

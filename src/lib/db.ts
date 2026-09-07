@@ -332,12 +332,94 @@ export class SessionDB {
     } catch (e) {}
   }
 
-  async getRecentSessions(limit = 20): Promise<PhotoboothSession[]> {
+  /**
+   * Automatically delete sessions older than retentionDays (default 30 days)
+   * Deletes from both Supabase photobooth_sessions and localStorage cache
+   */
+  async cleanupOldSessions(retentionDays = 30): Promise<number> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+    const cutoffIso = cutoffDate.toISOString();
+    let deletedCount = 0;
+
+    // 1. Delete from Supabase
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data: oldSessions, error: selectErr } = await supabase
+          .from("photobooth_sessions")
+          .select("id, session_code, strip_url, gif_url, raw_photos")
+          .lt("created_at", cutoffIso);
+
+        if (!selectErr && oldSessions && oldSessions.length > 0) {
+          deletedCount = oldSessions.length;
+
+          // Attempt to remove corresponding files from storage bucket
+          try {
+            const filesToDelete: string[] = [];
+            for (const s of oldSessions) {
+              if (s.strip_url && s.strip_url.includes("/photobooth/")) {
+                const parts = s.strip_url.split("/photobooth/");
+                if (parts[1]) filesToDelete.push(parts[1].split("?")[0]);
+              }
+              if (s.gif_url && s.gif_url.includes("/photobooth/")) {
+                const parts = s.gif_url.split("/photobooth/");
+                if (parts[1]) filesToDelete.push(parts[1].split("?")[0]);
+              }
+              if (Array.isArray(s.raw_photos)) {
+                for (const r of s.raw_photos) {
+                  if (typeof r === "string" && r.includes("/photobooth/")) {
+                    const parts = r.split("/photobooth/");
+                    if (parts[1]) filesToDelete.push(parts[1].split("?")[0]);
+                  }
+                }
+              }
+            }
+            if (filesToDelete.length > 0) {
+              await supabase.storage.from("photobooth").remove(filesToDelete.slice(0, 100));
+            }
+          } catch (storageErr) {
+            console.warn("Storage cleanup notice:", storageErr);
+          }
+
+          // Delete rows from photobooth_sessions table
+          const { error: delErr } = await supabase
+            .from("photobooth_sessions")
+            .delete()
+            .lt("created_at", cutoffIso);
+
+          if (delErr) {
+            console.warn("Error deleting old sessions from Supabase:", delErr.message);
+          }
+        }
+      } catch (err) {
+        console.warn("cleanupOldSessions Supabase error:", err);
+      }
+    }
+
+    // 2. Clean up from localStorage
+    try {
+      const existing: PhotoboothSession[] = JSON.parse(localStorage.getItem(this.localKey) || "[]");
+      const filtered = existing.filter((s) => {
+        if (!s.created_at) return true;
+        return new Date(s.created_at).getTime() >= cutoffDate.getTime();
+      });
+      localStorage.setItem(this.localKey, JSON.stringify(filtered));
+    } catch {}
+
+    return deletedCount;
+  }
+
+  async getRecentSessions(limit = 40): Promise<PhotoboothSession[]> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 30);
+    const cutoffIso = cutoffDate.toISOString();
+
     if (isSupabaseConfigured() && supabase) {
       try {
         const { data, error } = await supabase
           .from("photobooth_sessions")
           .select("*")
+          .gte("created_at", cutoffIso)
           .order("created_at", { ascending: false })
           .limit(limit);
 
@@ -351,7 +433,12 @@ export class SessionDB {
 
     // Fallback to localStorage
     try {
-      return JSON.parse(localStorage.getItem(this.localKey) || "[]").slice(0, limit);
+      const existing: PhotoboothSession[] = JSON.parse(localStorage.getItem(this.localKey) || "[]");
+      const filtered = existing.filter((s) => {
+        if (!s.created_at) return true;
+        return new Date(s.created_at).getTime() >= cutoffDate.getTime();
+      });
+      return filtered.slice(0, limit);
     } catch {
       return [];
     }
