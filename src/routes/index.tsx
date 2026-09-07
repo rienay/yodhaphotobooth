@@ -353,7 +353,7 @@ function Photobooth() {
   }
 
   return (
-    <main className="min-h-screen flex flex-col items-center px-4 sm:px-8 py-6 sm:py-10">
+    <main className="photobooth-kiosk min-h-screen flex flex-col items-center px-4 sm:px-8 py-6 sm:py-10">
       <Header
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}

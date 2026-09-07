@@ -70,8 +70,19 @@
 
 @layer base {
   * { border-color: var(--color-border); }
-  html, body { font-family: var(--font-body); image-rendering: pixelated; }
-  body {
+  html, body {
+    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: #f8fafc;
+    color: #0f172a;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .photobooth-kiosk {
+    font-family: var(--font-body);
+    image-rendering: pixelated;
     background-color: var(--color-background);
     color: var(--color-foreground);
     background-image:
@@ -80,7 +91,14 @@
     background-size: 32px 32px;
     background-position: -1px -1px;
   }
-  h1,h2,h3,.pixel { font-family: var(--font-pixel); letter-spacing: 0.02em; }
+
+  .photobooth-kiosk h1,
+  .photobooth-kiosk h2,
+  .photobooth-kiosk h3,
+  .pixel {
+    font-family: var(--font-pixel);
+    letter-spacing: 0.02em;
+  }
 }
 
 /* ---- Pixel frame: chunky stepped border using box-shadow ---- */
