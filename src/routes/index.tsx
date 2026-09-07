@@ -4,7 +4,7 @@ import QRCode from "qrcode";
 import { AdminScreen, Template } from "@/components/AdminScreen";
 import { AdminLogin } from "@/components/AdminLogin";
 import { TemplateDB, CustomTemplate, SessionDB, SettingsDB } from "@/lib/db";
-import { isSupabaseConfigured, uploadToStorage, getSupabaseAnonKey, getSupabaseUrl } from "@/lib/supabase";
+import { isSupabaseConfigured, uploadToStorage, getSupabaseAnonKey, getSupabaseUrl, compressDataUrlToJpegBlob } from "@/lib/supabase";
 import { generateGifFromPhotos } from "@/lib/gif";
 import { recordLiveClip, composeLiveVideoFrame, composeLiveGifFrame } from "@/lib/frameLive";
 import {
@@ -1948,10 +1948,30 @@ function ResultScreen({
 
   // Customer download portal URL (passes key if configured so customer HP connects seamlessly)
   const currentAnonKey = getSupabaseAnonKey();
+  const currentSupabaseUrl = getSupabaseUrl();
   const keyQueryParam = currentAnonKey ? `&k=${encodeURIComponent(currentAnonKey)}` : "";
-  const portalUrl = typeof window !== "undefined"
-    ? `${window.location.origin}${window.location.pathname}?session=${sessionCode}${keyQueryParam}`
-    : `https://yodhaphotobooth.vercel.app/?session=${sessionCode}${keyQueryParam}`;
+  const urlQueryParam = currentSupabaseUrl && !currentSupabaseUrl.includes("your-project-ref")
+    ? `&u=${encodeURIComponent(currentSupabaseUrl)}`
+    : "";
+
+  // Check if running on localhost or local dev environment
+  const isLocalHost = typeof window !== "undefined" && (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1" ||
+    window.location.hostname.endsWith(".test") ||
+    window.location.hostname.endsWith(".local")
+  );
+
+  const savedPublicDomain = typeof window !== "undefined" ? localStorage.getItem("yodha_public_portal_url") : null;
+  const baseUrl = (savedPublicDomain && savedPublicDomain.trim())
+    ? savedPublicDomain.trim().replace(/\/$/, "")
+    : isLocalHost
+      ? "https://yodhaphotobooth.vercel.app"
+      : typeof window !== "undefined"
+        ? `${window.location.origin}${window.location.pathname}`.replace(/\/$/, "")
+        : "https://yodhaphotobooth.vercel.app";
+
+  const portalUrl = `${baseUrl}/?session=${sessionCode}${keyQueryParam}${urlQueryParam}`;
   const [qrCodeData, setQrCodeData] = useState(portalUrl);
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
 
@@ -2037,111 +2057,98 @@ function ResultScreen({
     async function uploadAndPersist() {
       uploadedRef.current = strip; // prevent duplicate uploads
       let finalStripUrl = strip;
-      let finalGifUrl: string | undefined = undefined;
-      const rawPhotoUrls: string[] = [];
+      const sessionDB = new SessionDB();
       let dbSaved = false;
 
       // 1. Try Supabase Cloud Database & Storage
       if (isSupabaseConfigured()) {
         try {
           if (active) setUploadStatus("uploading_db");
-          const path = `photos/${sessionCode}_strip.png`;
+          const path = `photos/${sessionCode}_strip.jpg`;
           try {
-            finalStripUrl = await uploadToStorage(strip, path, "image/png");
+            // Compress photostrip to high-quality JPEG Blob for 20x faster upload (from 6MB down to ~350KB)
+            const compressedBlob = await compressDataUrlToJpegBlob(strip, 0.92, 1800);
+            finalStripUrl = await uploadToStorage(compressedBlob, path, "image/jpeg");
           } catch (sErr) {
             console.warn("Storage strip upload failed, using direct image fallback:", sErr);
             finalStripUrl = strip;
           }
 
-          // Upload raw photos taken by camera
-          if (active) setUploadStatus("uploading_raw");
-          for (let i = 0; i < photos.length; i++) {
-            try {
-              const rawUrl = await uploadToStorage(photos[i], `photos/${sessionCode}_raw_${i + 1}.jpg`, "image/jpeg");
-              rawPhotoUrls.push(rawUrl);
-            } catch (rErr) {
-              console.warn(`Raw photo ${i + 1} upload warning:`, rErr);
-              rawPhotoUrls.push(photos[i]);
-            }
-          }
+          // Clean template URL so huge base64 is never inserted into database rows
+          const cleanTemplateUrl = overlaySrc && !overlaySrc.startsWith("data:") ? overlaySrc : undefined;
 
-          // Upload 3-second live videos per pose
-          const rawVideoUrls: string[] = [];
-          if (liveVideos && liveVideos.length > 0) {
-            for (let i = 0; i < liveVideos.length; i++) {
-              if (!liveVideos[i]) continue;
-              try {
-                const vUrl = await uploadToStorage(liveVideos[i], `photos/${sessionCode}_live_${i + 1}.webm`, "video/webm");
-                rawVideoUrls.push(vUrl);
-              } catch (vErr) {
-                console.warn(`Live video ${i + 1} upload warning:`, vErr);
-                rawVideoUrls.push(liveVideos[i]);
-              }
-            }
-          }
-
-          // Composite 3-second live videos inside the photostrip frame!
-          let framedLiveVideoUrl: string | undefined = undefined;
-          if (liveVideos && liveVideos.length > 0 && overlaySrc) {
-            try {
-              const framedVideoData = await composeLiveVideoFrame(overlaySrc, liveVideos, layout);
-              if (framedVideoData) {
-                framedLiveVideoUrl = await uploadToStorage(framedVideoData, `photos/${sessionCode}_framed_live.webm`, "video/webm");
-              }
-            } catch (flErr) {
-              console.warn("Framed live video composite warning:", flErr);
-            }
-          }
-
-          // Generate & upload GIF (12 seconds looping)
-          try {
-            if (active) setUploadStatus("generating_gif");
-            let gifBase64: string | undefined = undefined;
-
-            // If live videos exist, create 12-second framed live GIF
-            if (liveVideos && liveVideos.length > 0 && overlaySrc) {
-              try {
-                gifBase64 = await composeLiveGifFrame(overlaySrc, liveVideos, layout, 400, 8, 4);
-              } catch (flgErr) {
-                console.warn("Framed live GIF generation warning, fallback to photos:", flgErr);
-              }
-            }
-
-            // Fallback: generate 12-second GIF from photos
-            if (!gifBase64) {
-              gifBase64 = await generateGifFromPhotos(photos, 640, 500, 12000);
-            }
-
-            if (gifBase64) {
-              const gifPath = `photos/${sessionCode}_animated.gif`;
-              try {
-                finalGifUrl = await uploadToStorage(gifBase64, gifPath, "image/gif");
-              } catch (gErr) {
-                console.warn("GIF storage upload failed, using base64 fallback:", gErr);
-                finalGifUrl = gifBase64;
-              }
-            }
-          } catch (gifErr) {
-            console.warn("GIF generation warning:", gifErr);
-          }
-
-          // Save session to database table photobooth_sessions
-          const sessionDB = new SessionDB();
+          // FAST-PATH: Langsung simpan data sesi awal ke database agar QR Code segera muncul dan bisa di-scan HP!
           await sessionDB.saveSession({
             session_code: sessionCode,
             layout,
             variant,
-            template_url: overlaySrc || undefined,
+            template_url: cleanTemplateUrl,
             strip_url: finalStripUrl,
-            gif_url: finalGifUrl,
-            live_photo_url: framedLiveVideoUrl || rawVideoUrls[0] || finalGifUrl || photos[0],
-            live_videos: rawVideoUrls.length > 0 ? rawVideoUrls : (liveVideos || []),
-            raw_photos: rawPhotoUrls,
+            gif_url: undefined,
+            live_photo_url: undefined,
+            live_videos: [],
+            raw_photos: [],
             total_photos: photos.length,
           });
 
           dbSaved = true;
+          // QR Code LANGSUNG MUNCUL (< 1-2 detik)!
           if (active) setUploadStatus("success");
+
+          // BACKGROUND ASYNC: Upload foto mentah, video live, dan generate GIF tanpa menahan QR code
+          (async () => {
+            try {
+              // Upload raw photos secara paralel (cepat & terkompresi)
+              const rawPromises = photos.map(async (p, i) => {
+                try {
+                  const compressed = await compressDataUrlToJpegBlob(p, 0.90, 1280);
+                  return await uploadToStorage(compressed, `photos/${sessionCode}_raw_${i + 1}.jpg`, "image/jpeg");
+                } catch {
+                  return null;
+                }
+              });
+              const uploadedRawUrls = (await Promise.all(rawPromises)).filter(Boolean) as string[];
+
+              // Upload live videos secara paralel (cepat & format MP4)
+              const videoPromises = (liveVideos || []).map((v, i) =>
+                v ? uploadToStorage(v, `photos/${sessionCode}_live_${i + 1}.mp4`, "video/mp4").catch(() => "") : Promise.resolve("")
+              );
+              const uploadedVideoUrls = (await Promise.all(videoPromises)).filter(Boolean);
+
+              // Perbarui database sesi dengan foto asli dan video live
+              await sessionDB.updateSession(sessionCode, {
+                raw_photos: uploadedRawUrls,
+                live_videos: uploadedVideoUrls,
+                live_photo_url: uploadedVideoUrls[0] || undefined,
+              });
+
+              // 1. Generate GIF 12s: Isinya foto-foto asli diulang-ulang tanpa frame, rasio sesuai kamera
+              try {
+                const gifBase64 = await generateGifFromPhotos(photos, 640, 500, 12000);
+                if (gifBase64) {
+                  const finalGif = await uploadToStorage(gifBase64, `photos/${sessionCode}_animation.gif`, "image/gif");
+                  await sessionDB.updateSession(sessionCode, { gif_url: finalGif });
+                }
+              } catch (gifErr) {
+                console.warn("GIF generation warning:", gifErr);
+              }
+
+              // 2. Composite live video frame jika template overlay ada: Format MP4 HD
+              if (liveVideos && liveVideos.length > 0 && overlaySrc) {
+                try {
+                  const framedVideoData = await composeLiveVideoFrame(overlaySrc, liveVideos, layout);
+                  if (framedVideoData) {
+                    const framedLiveVideoUrl = await uploadToStorage(framedVideoData, `photos/${sessionCode}_framed_live.mp4`, "video/mp4");
+                    await sessionDB.updateSession(sessionCode, { live_photo_url: framedLiveVideoUrl });
+                  }
+                } catch (lvErr) {
+                  console.warn("Framed live video warning:", lvErr);
+                }
+              }
+            } catch (bgErr) {
+              console.warn("Background upload processing warning:", bgErr);
+            }
+          })();
         } catch (dbErr) {
           console.warn("Supabase upload/save warning, fallback to local:", dbErr);
         }
@@ -2149,22 +2156,14 @@ function ResultScreen({
 
       // 2. Fallback: Save session to local database cache if offline or not configured
       if (!dbSaved) {
-        let framedLiveVideoUrl: string | undefined = undefined;
-        if (liveVideos && liveVideos.length > 0 && overlaySrc) {
-          try {
-            framedLiveVideoUrl = await composeLiveVideoFrame(overlaySrc, liveVideos, layout);
-          } catch {}
-        }
-
-        const sessionDB = new SessionDB();
         await sessionDB.saveSession({
           session_code: sessionCode,
           layout,
           variant,
           template_url: overlaySrc || undefined,
           strip_url: strip,
-          gif_url: finalGifUrl,
-          live_photo_url: framedLiveVideoUrl || liveVideos[0] || photos[0],
+          gif_url: undefined,
+          live_photo_url: liveVideos[0] || photos[0],
           live_videos: liveVideos || [],
           raw_photos: photos,
           total_photos: photos.length,

@@ -61,8 +61,14 @@ CREATE POLICY "Allow public read sessions" ON public.photobooth_sessions FOR SEL
 DROP POLICY IF EXISTS "Allow public insert sessions" ON public.photobooth_sessions;
 CREATE POLICY "Allow public insert sessions" ON public.photobooth_sessions FOR INSERT WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Allow public update sessions" ON public.photobooth_sessions;
+CREATE POLICY "Allow public update sessions" ON public.photobooth_sessions FOR UPDATE USING (true);
+
 DROP POLICY IF EXISTS "Allow public delete sessions" ON public.photobooth_sessions;
 CREATE POLICY "Allow public delete sessions" ON public.photobooth_sessions FOR DELETE USING (true);
+
+-- Index untuk mempercepat query scan QR pencarian session_code
+CREATE INDEX IF NOT EXISTS idx_photobooth_sessions_code ON public.photobooth_sessions (session_code);
 
 
 -- 3. TABEL PENGATURAN BOOTH (CAMERA, DISABLED TEMPLATES, DLL)

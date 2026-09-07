@@ -21,15 +21,24 @@ export function loadImg(src: string): Promise<HTMLImageElement> {
 export function recordLiveClip(stream: MediaStream, durationMs = 3000): Promise<string> {
   return new Promise((resolve) => {
     try {
-      const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+      const mimeType = MediaRecorder.isTypeSupported("video/mp4;codecs=avc1")
+        ? "video/mp4;codecs=avc1"
+        : MediaRecorder.isTypeSupported("video/mp4;codecs=h264")
+        ? "video/mp4;codecs=h264"
+        : MediaRecorder.isTypeSupported("video/mp4")
+        ? "video/mp4"
+        : MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+        ? "video/webm;codecs=vp9"
+        : MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
         ? "video/webm;codecs=vp8"
         : MediaRecorder.isTypeSupported("video/webm")
         ? "video/webm"
-        : MediaRecorder.isTypeSupported("video/mp4")
-        ? "video/mp4"
         : "";
 
-      const options: MediaRecorderOptions = mimeType ? { mimeType } : {};
+      const options: MediaRecorderOptions = {
+        ...(mimeType ? { mimeType } : {}),
+        videoBitsPerSecond: 6000000, // 6 Mbps HD
+      };
       const recorder = new MediaRecorder(stream, options);
       const chunks: Blob[] = [];
 
@@ -40,7 +49,7 @@ export function recordLiveClip(stream: MediaStream, durationMs = 3000): Promise<
       };
 
       recorder.onstop = () => {
-        const actualMime = mimeType || "video/webm";
+        const actualMime = mimeType.includes("mp4") ? "video/mp4" : (mimeType || "video/mp4");
         const blob = new Blob(chunks, { type: actualMime });
         const reader = new FileReader();
         reader.onloadend = () => resolve((reader.result as string) || "");
@@ -221,15 +230,24 @@ export async function composeLiveVideoFrame(
   const stream = canvas.captureStream ? canvas.captureStream(30) : null;
   if (!stream) throw new Error("canvas.captureStream not supported in this browser");
 
-  const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+  const mimeType = MediaRecorder.isTypeSupported("video/mp4;codecs=avc1")
+    ? "video/mp4;codecs=avc1"
+    : MediaRecorder.isTypeSupported("video/mp4;codecs=h264")
+    ? "video/mp4;codecs=h264"
+    : MediaRecorder.isTypeSupported("video/mp4")
+    ? "video/mp4"
+    : MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+    ? "video/webm;codecs=vp9"
+    : MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
     ? "video/webm;codecs=vp8"
     : MediaRecorder.isTypeSupported("video/webm")
     ? "video/webm"
-    : MediaRecorder.isTypeSupported("video/mp4")
-    ? "video/mp4"
     : "";
 
-  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+  const recorder = new MediaRecorder(stream, {
+    ...(mimeType ? { mimeType } : {}),
+    videoBitsPerSecond: 8000000, // 8 Mbps Full HD quality
+  });
   const chunks: Blob[] = [];
 
   recorder.ondataavailable = (e) => {
@@ -287,7 +305,7 @@ export async function composeLiveVideoFrame(
         v.src = "";
       });
 
-      const actualMime = mimeType || "video/webm";
+      const actualMime = mimeType.includes("mp4") ? "video/mp4" : "video/mp4";
       const blob = new Blob(chunks, { type: actualMime });
       const reader = new FileReader();
       reader.onloadend = () => resolve((reader.result as string) || "");

@@ -293,6 +293,34 @@ export class SessionDB {
     return sessionData;
   }
 
+  async updateSession(sessionCode: string, patch: Partial<PhotoboothSession>): Promise<void> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const updatePayload: any = { ...patch };
+        delete updatePayload.id;
+        delete updatePayload.session_code;
+        delete updatePayload.created_at;
+
+        await supabase
+          .from("photobooth_sessions")
+          .update(updatePayload)
+          .eq("session_code", sessionCode);
+      } catch (err) {
+        console.warn("Failed updating session in Supabase:", err);
+      }
+    }
+
+    // Update local cache
+    try {
+      const existing: PhotoboothSession[] = JSON.parse(localStorage.getItem(this.localKey) || "[]");
+      const idx = existing.findIndex((s) => s.session_code === sessionCode || s.id === sessionCode);
+      if (idx !== -1) {
+        existing[idx] = { ...existing[idx], ...patch };
+        localStorage.setItem(this.localKey, JSON.stringify(existing));
+      }
+    } catch (e) {}
+  }
+
   async getRecentSessions(limit = 20): Promise<PhotoboothSession[]> {
     if (isSupabaseConfigured() && supabase) {
       try {
