@@ -10,8 +10,12 @@ import {
   Image as ImageIcon,
   ArrowLeft,
   ExternalLink,
+  Play,
+  Pause,
+  RotateCcw,
 } from "lucide-react";
 import yodhaLogo from "@/assets/yodha.png";
+import { generateGifFromPhotos } from "@/lib/gif";
 
 interface CustomerDownloadPortalProps {
   sessionCode: string;
@@ -24,8 +28,18 @@ export function CustomerDownloadPortal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
-  const [activeTab, setActiveTab] = useState<"strip" | "gif" | "raw">("strip");
+  const [activeTab, setActiveTab] = useState<"strip" | "gif" | "live" | "raw">("strip");
   const [retryCount, setRetryCount] = useState(0);
+
+  // Dynamic GIF generation fallback
+  const [gifUrl, setGifUrl] = useState<string | null>(null);
+  const [isGeneratingGif, setIsGeneratingGif] = useState(false);
+
+  // Live Photo interactive player state
+  const [liveIndex, setLiveIndex] = useState(0);
+  const [liveForward, setLiveForward] = useState(true);
+  const [isLivePlaying, setIsLivePlaying] = useState(true);
+  const [liveSpeed, setLiveSpeed] = useState(400);
 
   useEffect(() => {
     let active = true;
@@ -82,6 +96,46 @@ export function CustomerDownloadPortal({
     };
   }, [sessionCode, retryCount]);
 
+  // Dynamic GIF generation fallback from raw photos if not in DB
+  useEffect(() => {
+    if (!session) return;
+    if (session.gif_url) {
+      setGifUrl(session.gif_url);
+    } else if (session.raw_photos && session.raw_photos.length > 0) {
+      setIsGeneratingGif(true);
+      generateGifFromPhotos(session.raw_photos)
+        .then((url) => setGifUrl(url))
+        .catch((e) => console.warn("Failed to generate dynamic GIF:", e))
+        .finally(() => setIsGeneratingGif(false));
+    }
+  }, [session]);
+
+  // Live Photo Boomerang animation loop
+  useEffect(() => {
+    const rawList = session?.raw_photos;
+    if (!rawList || rawList.length <= 1 || !isLivePlaying) return;
+    const interval = setInterval(() => {
+      setLiveIndex((prev) => {
+        const total = rawList.length;
+        if (total <= 1) return 0;
+        if (liveForward) {
+          if (prev >= total - 1) {
+            setLiveForward(false);
+            return Math.max(0, prev - 1);
+          }
+          return prev + 1;
+        } else {
+          if (prev <= 0) {
+            setLiveForward(true);
+            return Math.min(total - 1, 1);
+          }
+          return prev - 1;
+        }
+      });
+    }, liveSpeed);
+    return () => clearInterval(interval);
+  }, [session?.raw_photos, isLivePlaying, liveForward, liveSpeed]);
+
   const handleShare = () => {
     if (navigator.clipboard) {
       navigator.clipboard.writeText(window.location.href);
@@ -106,9 +160,10 @@ export function CustomerDownloadPortal({
     if (session.strip_url) {
       triggerDownload(session.strip_url, `${session.session_code}_strip.png`);
     }
-    if (session.gif_url) {
+    const finalGif = gifUrl || session.gif_url;
+    if (finalGif) {
       setTimeout(() => {
-        triggerDownload(session.gif_url!, `${session.session_code}_animation.gif`);
+        triggerDownload(finalGif, `${session.session_code}_animation.gif`);
       }, 500);
     }
     if (session.raw_photos && session.raw_photos.length > 0) {
@@ -212,41 +267,53 @@ export function CustomerDownloadPortal({
         </div>
 
         {/* ── Tabs Navigation ── */}
-        <div className="grid grid-cols-3 gap-1.5 bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl text-xs font-bold text-slate-400 shadow-inner">
+        <div className="grid grid-cols-4 gap-1 bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl text-[11px] font-bold text-slate-400 shadow-inner">
           <button
             onClick={() => setActiveTab("strip")}
-            className={`py-2 px-2 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+            className={`py-2 px-1 rounded-xl flex flex-col sm:flex-row items-center justify-center gap-1 transition-all cursor-pointer ${
               activeTab === "strip"
                 ? "bg-blue-600 text-white shadow-md shadow-blue-600/20"
                 : "hover:text-slate-200 hover:bg-slate-800/50"
             }`}
           >
-            <ImageIcon className="w-3.5 h-3.5" />
-            <span>Foto Frame</span>
+            <ImageIcon className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Frame</span>
           </button>
 
           <button
             onClick={() => setActiveTab("gif")}
-            className={`py-2 px-2 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+            className={`py-2 px-1 rounded-xl flex flex-col sm:flex-row items-center justify-center gap-1 transition-all cursor-pointer ${
               activeTab === "gif"
                 ? "bg-purple-600 text-white shadow-md shadow-purple-600/20"
                 : "hover:text-slate-200 hover:bg-slate-800/50"
             }`}
           >
-            <Film className="w-3.5 h-3.5" />
-            <span>Animasi GIF</span>
+            <Film className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">GIF</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("live")}
+            className={`py-2 px-1 rounded-xl flex flex-col sm:flex-row items-center justify-center gap-1 transition-all cursor-pointer ${
+              activeTab === "live"
+                ? "bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/20"
+                : "hover:text-slate-200 hover:bg-slate-800/50"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 shrink-0 text-amber-400 animate-pulse" />
+            <span className="truncate">Foto Live</span>
           </button>
 
           <button
             onClick={() => setActiveTab("raw")}
-            className={`py-2 px-2 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+            className={`py-2 px-1 rounded-xl flex flex-col sm:flex-row items-center justify-center gap-1 transition-all cursor-pointer ${
               activeTab === "raw"
                 ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/20"
                 : "hover:text-slate-200 hover:bg-slate-800/50"
             }`}
           >
-            <Camera className="w-3.5 h-3.5" />
-            <span>Foto Asli ({rawPhotos.length})</span>
+            <Camera className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Asli ({rawPhotos.length})</span>
           </button>
         </div>
 
@@ -284,15 +351,15 @@ export function CustomerDownloadPortal({
           </div>
         )}
 
-        {/* ── TAB 2: ANIMASI GIF & LIVE PHOTO ── */}
+        {/* ── TAB 2: ANIMASI GIF ── */}
         {activeTab === "gif" && (
           <div className="space-y-4 animate-in fade-in duration-200">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex flex-col items-center">
-              {session.gif_url ? (
+              {gifUrl || session.gif_url ? (
                 <>
                   <div className="w-full max-w-[340px] aspect-square bg-slate-950 rounded-xl overflow-hidden flex items-center justify-center shadow-2xl border border-slate-800/80 p-1">
                     <img
-                      src={session.gif_url}
+                      src={(gifUrl || session.gif_url)!}
                       alt="Animasi GIF Photobooth"
                       className="w-full h-full object-contain rounded-lg"
                     />
@@ -300,14 +367,14 @@ export function CustomerDownloadPortal({
 
                   <div className="w-full pt-4 space-y-2">
                     <button
-                      onClick={() => triggerDownload(session.gif_url!, `${session.session_code}_animation.gif`)}
+                      onClick={() => triggerDownload((gifUrl || session.gif_url)!, `${session.session_code}_animation.gif`)}
                       className="w-full py-3 px-4 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold shadow-md shadow-purple-600/25 flex items-center justify-center gap-2 transition-all cursor-pointer"
                     >
                       <Download className="w-4 h-4" />
-                      <span>Unduh Animasi GIF</span>
+                      <span>Unduh Animasi GIF (.gif)</span>
                     </button>
                     <a
-                      href={session.gif_url}
+                      href={(gifUrl || session.gif_url)!}
                       target="_blank"
                       rel="noreferrer"
                       className="w-full py-2 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
@@ -317,10 +384,105 @@ export function CustomerDownloadPortal({
                     </a>
                   </div>
                 </>
+              ) : isGeneratingGif ? (
+                <div className="py-16 text-center space-y-3 text-slate-400">
+                  <div className="w-10 h-10 border-3 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                  <p className="text-xs font-semibold text-slate-300">Sedang merender animasi GIF...</p>
+                  <p className="text-[10px] text-slate-500">Menggabungkan seluruh pose foto menjadi loop bergerak</p>
+                </div>
               ) : (
                 <div className="py-16 text-center space-y-2 text-slate-400">
                   <Film className="w-12 h-12 mx-auto opacity-40 text-purple-400" />
                   <p className="text-xs font-semibold text-slate-300">Animasi GIF tidak tersedia untuk sesi ini</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── TAB 3: FOTO LIVE (INTERACTIVE LIVE PHOTO BOOMERANG) ── */}
+        {activeTab === "live" && (
+          <div className="space-y-4 animate-in fade-in duration-200">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col items-center">
+              {rawPhotos.length > 0 ? (
+                <>
+                  <div
+                    onClick={() => setIsLivePlaying((p) => !p)}
+                    className="relative w-full max-w-[340px] aspect-square bg-slate-950 rounded-2xl overflow-hidden flex items-center justify-center shadow-2xl border-2 border-amber-500/30 cursor-pointer select-none group"
+                  >
+                    <img
+                      src={rawPhotos[liveIndex % rawPhotos.length]}
+                      alt="Foto Live"
+                      className="w-full h-full object-cover transition-transform duration-100"
+                    />
+
+                    {/* iOS Live Photo Badge */}
+                    <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white text-[10px] font-black uppercase tracking-wider shadow-md">
+                      <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                      <span>LIVE</span>
+                    </div>
+
+                    {/* Frame Indicator */}
+                    <div className="absolute top-3 right-3 px-2 py-0.5 rounded-md bg-black/50 text-slate-300 text-[10px] font-mono backdrop-blur-xs">
+                      {liveIndex + 1}/{rawPhotos.length}
+                    </div>
+
+                    {/* Touch / Click Hint */}
+                    <div className="absolute bottom-3 inset-x-3 py-1 px-2 rounded-lg bg-black/60 backdrop-blur-md text-center text-[10px] text-slate-200 opacity-80 group-hover:opacity-100 transition-opacity">
+                      {isLivePlaying ? "Sentuh untuk jeda gerakan" : "Sentuh untuk putar gerakan"}
+                    </div>
+                  </div>
+
+                  {/* Playback Controls */}
+                  <div className="w-full flex items-center justify-between gap-2 pt-4 pb-2 border-b border-slate-800">
+                    <button
+                      onClick={() => setIsLivePlaying((p) => !p)}
+                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      {isLivePlaying ? <Pause className="w-3.5 h-3.5 text-amber-400" /> : <Play className="w-3.5 h-3.5 text-emerald-400" />}
+                      <span>{isLivePlaying ? "Jeda" : "Putar"}</span>
+                    </button>
+
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-slate-400 mr-1">Kecepatan:</span>
+                      {[500, 350, 200].map((speed, i) => (
+                        <button
+                          key={speed}
+                          onClick={() => setLiveSpeed(speed)}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors ${
+                            liveSpeed === speed ? "bg-amber-500 text-slate-950" : "bg-slate-800 text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          {i === 0 ? "0.7x" : i === 1 ? "1.0x" : "1.5x"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="w-full pt-3 space-y-2">
+                    <button
+                      onClick={() => {
+                        const dl = gifUrl || session.gif_url;
+                        if (dl) {
+                          triggerDownload(dl, `${session.session_code}_live_photo.gif`);
+                        } else if (rawPhotos[0]) {
+                          triggerDownload(rawPhotos[0], `${session.session_code}_live_photo.jpg`);
+                        }
+                      }}
+                      className="w-full py-3 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-xs font-black shadow-md shadow-amber-500/25 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Unduh Foto Live (.gif)</span>
+                    </button>
+                    <p className="text-[10px] text-slate-400 text-center">
+                      Foto live bergerak berulang menampilkan pose kamu secara berurutan.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <div className="py-16 text-center space-y-2 text-slate-400">
+                  <Sparkles className="w-12 h-12 mx-auto opacity-40 text-amber-400" />
+                  <p className="text-xs font-semibold text-slate-300">Foto live tidak tersedia untuk sesi ini</p>
                 </div>
               )}
             </div>

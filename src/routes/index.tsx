@@ -5,6 +5,7 @@ import { AdminScreen, Template } from "@/components/AdminScreen";
 import { AdminLogin } from "@/components/AdminLogin";
 import { TemplateDB, CustomTemplate, SessionDB, SettingsDB } from "@/lib/db";
 import { isSupabaseConfigured, uploadToStorage, getSupabaseAnonKey, getSupabaseUrl } from "@/lib/supabase";
+import { generateGifFromPhotos } from "@/lib/gif";
 import {
   isAdminAuthenticated,
   isBoothAccessAllowed,
@@ -1900,34 +1901,7 @@ function ResultScreen({
 }) {
   const [sessionCode] = useState(() => `YODHA-${Date.now().toString().slice(-6)}`);
 
-  // Generate animated GIF from captured photos using gifshot (CDN loaded dynamically)
-  const generateGifFromPhotos = async (photos: string[]): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const loadGifshot = () => {
-        // @ts-ignore
-        if (window.gifshot) {
-          // @ts-ignore
-          window.gifshot.createGIF({ images: photos, gifWidth: 500, gifHeight: 500, interval: 0.5, numFrames: photos.length }, (obj: any) => {
-            if (!obj.error) resolve(obj.image);
-            else reject(obj.error);
-          });
-        } else {
-          const script = document.createElement("script");
-          script.src = "https://cdn.jsdelivr.net/npm/gifshot@0.3.2/gifshot.min.js";
-          script.onload = () => {
-            // @ts-ignore
-            window.gifshot.createGIF({ images: photos, gifWidth: 500, gifHeight: 500, interval: 0.5, numFrames: photos.length }, (obj: any) => {
-              if (!obj.error) resolve(obj.image);
-              else reject(obj.error);
-            });
-          };
-          script.onerror = (e) => reject(e);
-          document.body.appendChild(script);
-        }
-      };
-      loadGifshot();
-    });
-  };
+
 
   const [customText, setCustomText] = useState(() => {
     if (frame === "template") return "";
