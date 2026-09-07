@@ -1322,14 +1322,15 @@ function ShootScreen({
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const layoutConfig = LAYOUTS.find((l) => l.id === layout) || LAYOUTS[0];
-  const total = layoutConfig.totalPhotos;
-
   const activeTemplate =
     templates.find(t => t.id === (layout + "_" + variant) || t.id === variant || t.presetId === variant) ||
     templates.find(t => t.layout === layout && t.enabled) ||
     templates.find(t => t.layout === layout) ||
     templates[0];
+  const layoutConfig = LAYOUTS.find((l) => l.id === layout) || LAYOUTS[0];
+  const total = (activeTemplate?.photoBoxes && activeTemplate.photoBoxes.length > 0)
+    ? activeTemplate.photoBoxes.length
+    : layoutConfig.totalPhotos;
   const effectivePreset = activeTemplate?.presetId || variant;
   const variantConfig = getVariantHoleConfig(layout, effectivePreset);
   // All frames now stored directly in template img field; no legacy fallback needed

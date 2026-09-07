@@ -560,8 +560,8 @@ export function AdminScreen({
             const w = maxX - minX + 1;
             const h = maxY - minY + 1;
             const area = w * h;
-            // Filter realistic photo holes (min 10% width or 4% height, min 1% area)
-            if (w >= width * 0.10 && h >= height * 0.04 && area >= (width * height) * 0.012 && w < width * 0.98 && h < height * 0.98) {
+            // Filter realistic photo holes (min 6% width, min 3% height, min 0.5% area to detect circles, stars, hexagons, wavy shapes)
+            if (w >= width * 0.06 && h >= height * 0.03 && area >= (width * height) * 0.005 && w < width * 0.98 && h < height * 0.98) {
               holes.push({
                 x: Math.round(minX / scale),
                 y: Math.round(minY / scale),
@@ -589,33 +589,71 @@ export function AdminScreen({
 
   const applyHolesToLayout = (holes: { x: number; y: number; w: number; h: number }[]) => {
     setDetectedHoles(holes);
+
+    // Automatically create photo boxes for all detected holes (circles, stars, hexagons, wavy, rectangles)
+    if (holes.length > 0 && workingCanvasRef.current) {
+      const origW = workingCanvasRef.current.width;
+      const origH = workingCanvasRef.current.height;
+      if (origW > 0 && origH > 0) {
+        const autoBoxes: PhotoBox[] = holes.map((hl, i) => {
+          const bx = (hl.x / origW) * 100;
+          const by = (hl.y / origH) * 100;
+          const bw = (hl.w / origW) * 100;
+          const bh = (hl.h / origH) * 100;
+
+          // Add slight 1.5% bleed so circular, star, wavy edges fit seamlessly behind the frame overlay
+          const bleedX = Math.min(1.5, bw * 0.03);
+          const bleedY = Math.min(1.5, bh * 0.03);
+          const fx = Math.max(0, bx - bleedX);
+          const fy = Math.max(0, by - bleedY);
+          const fw = Math.min(100 - fx, bw + bleedX * 2);
+          const fh = Math.min(100 - fy, bh + bleedY * 2);
+
+          return {
+            id: `box_${i + 1}`,
+            x: Math.round(fx * 10) / 10,
+            y: Math.round(fy * 10) / 10,
+            w: Math.round(fw * 10) / 10,
+            h: Math.round(fh * 10) / 10,
+          };
+        });
+
+        setPhotoBoxes(autoBoxes);
+        if (autoBoxes.length > 0) {
+          setSelectedBoxId(autoBoxes[0].id);
+        }
+      }
+    }
+
     if (holes.length === 4) {
       setNewLayout("2x2");
       setNewPreset("auto");
-      setActionStatus("🎉 Terdeteksi 4 lubang foto! Layout otomatis disetel ke Grid 4 Foto (2x2 Auto).");
+      setActionStatus("🎉 Terdeteksi 4 lubang foto! Posisi penanda otomatis terpasang.");
     } else if (holes.length === 3) {
       setNewLayout("3x1");
       setNewPreset("auto");
-      setActionStatus("🎉 Terdeteksi 3 lubang foto! Layout otomatis disetel ke Strip 3 Foto (3x1 Auto).");
+      setActionStatus("🎉 Terdeteksi 3 lubang foto! Posisi penanda otomatis terpasang.");
     } else if (holes.length === 6) {
       setNewLayout("3x2");
       setNewPreset("auto");
-      setActionStatus("🎉 Terdeteksi 6 lubang foto! Layout otomatis disetel ke Grid 6 Foto (3x2 Auto).");
+      setActionStatus("🎉 Terdeteksi 6 lubang foto! Posisi penanda otomatis terpasang.");
     } else if (holes.length === 2) {
       setNewLayout("2x1");
       setNewPreset("auto");
-      setActionStatus("🎉 Terdeteksi 2 lubang foto! Layout otomatis disetel ke Strip 2 Foto (2x1 Auto).");
+      setActionStatus("🎉 Terdeteksi 2 lubang foto! Posisi penanda otomatis terpasang.");
     } else if (holes.length === 1) {
       setNewLayout("1x1");
       setNewPreset("auto");
-      setActionStatus("🎉 Terdeteksi 1 lubang foto! Layout otomatis disetel ke Foto Tunggal (1x1 Auto).");
+      setActionStatus("🎉 Terdeteksi 1 lubang foto! Posisi penanda otomatis terpasang.");
     } else if (holes.length === 8) {
       setNewLayout("4x2");
       setNewPreset("auto");
-      setActionStatus("🎉 Terdeteksi 8 lubang foto! Layout otomatis disetel ke Grid 8 Foto (4x2 Auto).");
+      setActionStatus("🎉 Terdeteksi 8 lubang foto! Posisi penanda otomatis terpasang.");
     } else if (holes.length > 0) {
+      if (holes.length <= 4) setNewLayout("2x2");
+      else setNewLayout("3x2");
       setNewPreset("auto");
-      setActionStatus(`✨ Terdeteksi ${holes.length} lubang foto pada bingkai.`);
+      setActionStatus(`🎉 Terdeteksi ${holes.length} lubang foto! Semua kotak penanda otomatis terpasang.`);
     }
   };
 
@@ -1270,6 +1308,22 @@ export function AdminScreen({
       })
     );
     setActionStatus(`Rasio kotak diubah ke ${ratio}`);
+  };
+
+  // Auto detect all transparent holes and place photo boxes automatically
+  const handleAutoDetectAndPlaceBoxes = () => {
+    if (!workingCanvasRef.current || !activeCanvasData) {
+      setActionStatus("⚠️ Muat gambar bingkai terlebih dahulu.");
+      return;
+    }
+    const canvas = workingCanvasRef.current;
+    const holes = detectHolesFromCanvas(canvas);
+    if (holes.length === 0) {
+      setActionStatus("⚠️ Belum ada lubang transparan terdeteksi. Silakan gunakan 'Hapus Hijau', 'Hapus Putih', atau 'Magic Wand' terlebih dahulu.");
+      return;
+    }
+    applyHolesToLayout(holes);
+    setInteractionMode("boxes");
   };
 
   // Add a new photo box
@@ -2629,7 +2683,16 @@ export function AdminScreen({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={handleAutoDetectAndPlaceBoxes}
+                          className="px-2.5 py-1 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:opacity-95 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer active:scale-95"
+                          title="Pindai semua lubang transparan (lingkaran, bintang, segi enam, dll) dan pasang penanda secara otomatis"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+                          <span>✨ Pasang Otomatis</span>
+                        </button>
                         {photoBoxes.length > 0 && (
                           <button
                             type="button"
@@ -2643,10 +2706,11 @@ export function AdminScreen({
                         <button
                           type="button"
                           onClick={handleAddBox}
-                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                          className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
+                          title="Tambah kotak foto manual"
                         >
                           <Plus className="w-3.5 h-3.5" />
-                          <span>Tambah Kotak</span>
+                          <span>+ Manual</span>
                         </button>
                       </div>
                     </div>
@@ -2799,19 +2863,32 @@ export function AdminScreen({
                     </button>
                   </div>
 
-                  {/* Mode switcher: Checkerboard vs Realistic Photos */}
-                  <button
-                    type="button"
-                    onClick={() => setPreviewTab(previewTab === "photos" ? "checkerboard" : "photos")}
-                    className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                      previewTab === "photos"
-                        ? "bg-purple-600 text-white border-purple-700 shadow-xs"
-                        : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
-                    }`}
-                  >
-                    <Camera className="w-3.5 h-3.5" />
-                    <span>Simulasi Foto</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {/* Quick 1-Click Auto Marker Placement Button */}
+                    <button
+                      type="button"
+                      onClick={handleAutoDetectAndPlaceBoxes}
+                      className="px-3 py-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:opacity-95 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs active:scale-95"
+                      title="Deteksi semua lubang foto (persegi, lingkaran, bintang, dll) dan pasang penanda secara otomatis"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+                      <span>✨ Pasang Penanda Otomatis</span>
+                    </button>
+
+                    {/* Mode switcher: Checkerboard vs Realistic Photos */}
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTab(previewTab === "photos" ? "checkerboard" : "photos")}
+                      className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        previewTab === "photos"
+                          ? "bg-purple-600 text-white border-purple-700 shadow-xs"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>Simulasi Foto</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Dimension & Aspect Ratio info pill */}
