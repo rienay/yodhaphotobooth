@@ -32,31 +32,31 @@ export interface FinanceTransaction {
 }
 
 export const INCOME_CATEGORIES: { id: TransactionCategory; label: string; emoji: string }[] = [
-  { id: "photo_session", label: "Sesi Foto Booth", emoji: "📸" },
-  { id: "reprint", label: "Cetak Tambahan / Ulang", emoji: "🖨️" },
-  { id: "event_rental", label: "Sewa Booth Event / Wedding", emoji: "🎉" },
-  { id: "digital_package", label: "Paket File Digital", emoji: "📱" },
-  { id: "other_income", label: "Pemasukan Lainnya", emoji: "💰" },
+  { id: "photo_session", label: "Sesi Foto Booth", emoji: "" },
+  { id: "reprint", label: "Cetak Tambahan / Ulang", emoji: "" },
+  { id: "event_rental", label: "Sewa Booth Event / Wedding", emoji: "" },
+  { id: "digital_package", label: "Paket File Digital", emoji: "" },
+  { id: "other_income", label: "Pemasukan Lainnya", emoji: "" },
 ];
 
 export const EXPENSE_CATEGORIES: { id: TransactionCategory; label: string; emoji: string }[] = [
-  { id: "paper_ribbon", label: "Kertas Foto & Ribbon / Tinta", emoji: "📄" },
-  { id: "props_decor", label: "Properti & Aksesoris Foto", emoji: "🎀" },
-  { id: "space_electricity", label: "Sewa Tempat & Listrik / WiFi", emoji: "⚡" },
-  { id: "staff_salary", label: "Gaji Operator / Tim Booth", emoji: "👤" },
-  { id: "maintenance", label: "Servis & Perawatan Alat", emoji: "🔧" },
-  { id: "marketing", label: "Promosi & Iklan", emoji: "📢" },
-  { id: "other_expense", label: "Pengeluaran Lainnya", emoji: "💸" },
+  { id: "paper_ribbon", label: "Kertas Foto & Ribbon / Tinta", emoji: "" },
+  { id: "props_decor", label: "Properti & Aksesoris Foto", emoji: "" },
+  { id: "space_electricity", label: "Sewa Tempat & Listrik / WiFi", emoji: "" },
+  { id: "staff_salary", label: "Gaji Operator / Tim Booth", emoji: "" },
+  { id: "maintenance", label: "Servis & Perawatan Alat", emoji: "" },
+  { id: "marketing", label: "Promosi & Iklan", emoji: "" },
+  { id: "other_expense", label: "Pengeluaran Lainnya", emoji: "" },
 ];
 
 export const ALL_CATEGORIES = [...INCOME_CATEGORIES, ...EXPENSE_CATEGORIES];
 
 export const PAYMENT_METHODS: { id: PaymentMethod; label: string; icon: string; emoji: string }[] = [
-  { id: "cash", label: "Tunai (Cash)", icon: "💵", emoji: "💵" },
-  { id: "qris", label: "QRIS", icon: "📱", emoji: "📱" },
-  { id: "transfer", label: "Transfer Bank", icon: "🏦", emoji: "🏦" },
-  { id: "debit", label: "Kartu Debit / EDC", icon: "💳", emoji: "💳" },
-  { id: "other", label: "Lainnya", icon: "🔖", emoji: "🔖" },
+  { id: "cash", label: "Tunai (Cash)", icon: "", emoji: "" },
+  { id: "qris", label: "QRIS", icon: "", emoji: "" },
+  { id: "transfer", label: "Transfer Bank", icon: "", emoji: "" },
+  { id: "debit", label: "Kartu Debit / EDC", icon: "", emoji: "" },
+  { id: "other", label: "Lainnya", icon: "", emoji: "" },
 ];
 
 export function formatRupiah(amount: number): string {
@@ -64,11 +64,11 @@ export function formatRupiah(amount: number): string {
 }
 
 export function getCategoryInfo(category: TransactionCategory) {
-  return ALL_CATEGORIES.find((c) => c.id === category) || { id: category, label: category, emoji: "📝" };
+  return ALL_CATEGORIES.find((c) => c.id === category) || { id: category, label: category, emoji: "" };
 }
 
 export function getPaymentMethodInfo(method: PaymentMethod) {
-  return PAYMENT_METHODS.find((m) => m.id === method) || { id: method, label: method, icon: "💳", emoji: "💳" };
+  return PAYMENT_METHODS.find((m) => m.id === method) || { id: method, label: method, icon: "", emoji: "" };
 }
 
 export class FinanceDB {

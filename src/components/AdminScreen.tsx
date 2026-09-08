@@ -1067,7 +1067,7 @@ export function AdminScreen({
       });
       const fresh = await sessionDB.getRecentSessions(50);
       setRecentSessions(fresh);
-      setActionStatus(`✅ Foto #${sess.session_code} berhasil dicetak (${numCopies} rangkap).`);
+      setActionStatus(`Foto #${sess.session_code} berhasil dicetak (${numCopies} rangkap).`);
       setTimeout(() => setActionStatus(""), 4000);
     } catch (err) {
       console.error("Gagal mencetak:", err);
@@ -1084,7 +1084,7 @@ export function AdminScreen({
     });
     const fresh = await sessionDB.getRecentSessions(50);
     setRecentSessions(fresh);
-    setActionStatus(`✅ Sesi #${sess.session_code} ditandai selesai dicetak.`);
+    setActionStatus(`Sesi #${sess.session_code} ditandai selesai dicetak.`);
     setTimeout(() => setActionStatus(""), 3500);
   };
 
@@ -1094,7 +1094,7 @@ export function AdminScreen({
     });
     const fresh = await sessionDB.getRecentSessions(50);
     setRecentSessions(fresh);
-    setActionStatus(`↩️ Sesi #${sess.session_code} dikembalikan ke antrian cetak.`);
+    setActionStatus(`Sesi #${sess.session_code} dikembalikan ke antrian cetak.`);
     setTimeout(() => setActionStatus(""), 3500);
   };
 
@@ -1103,7 +1103,7 @@ export function AdminScreen({
     await sessionDB.deleteSession(sess.session_code);
     const fresh = await sessionDB.getRecentSessions(50);
     setRecentSessions(fresh);
-    setActionStatus(`🗑️ Sesi #${sess.session_code} berhasil dihapus.`);
+    setActionStatus(`Sesi #${sess.session_code} berhasil dihapus.`);
     setTimeout(() => setActionStatus(""), 3500);
   };
 
@@ -1205,7 +1205,7 @@ export function AdminScreen({
           date: txDate,
           sessionCode: txSessionCode.trim() || undefined,
         });
-        setActionStatus(`✅ Transaksi berhasil diperbarui.`);
+        setActionStatus(`Transaksi berhasil diperbarui.`);
       } else {
         await financeDB.saveTransaction({
           type: txType,
@@ -1217,7 +1217,7 @@ export function AdminScreen({
           date: txDate,
           sessionCode: txSessionCode.trim() || undefined,
         });
-        setActionStatus(`✅ ${txType === "income" ? "Pemasukan" : "Pengeluaran"} sebesar ${formatRupiah(parsedAmount)} berhasil dicatat.`);
+        setActionStatus(`${txType === "income" ? "Pemasukan" : "Pengeluaran"} sebesar ${formatRupiah(parsedAmount)} berhasil dicatat.`);
       }
       setShowFinanceModal(false);
       await loadFinanceTransactions();
@@ -1233,7 +1233,7 @@ export function AdminScreen({
     try {
       await financeDB.deleteTransaction(id);
       await loadFinanceTransactions();
-      setActionStatus("🗑️ Transaksi keuangan berhasil dihapus.");
+      setActionStatus("Transaksi keuangan berhasil dihapus.");
       setTimeout(() => setActionStatus(""), 3500);
     } catch (e) {
       console.error(e);
@@ -2810,7 +2810,7 @@ export function AdminScreen({
                     className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
                   >
                     <ArrowDownLeft className="w-3.5 h-3.5" />
-                    <span>+ Pemasukan</span>
+                    <span>Pemasukan</span>
                   </button>
                   <button
                     type="button"
@@ -2818,7 +2818,7 @@ export function AdminScreen({
                     className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
                   >
                     <ArrowUpRight className="w-3.5 h-3.5" />
-                    <span>- Pengeluaran</span>
+                    <span>Pengeluaran</span>
                   </button>
                   <button
                     type="button"
@@ -2826,7 +2826,6 @@ export function AdminScreen({
                     className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center gap-1"
                   >
                     <span>Buku Kas</span>
-                    <span>→</span>
                   </button>
                 </div>
               </div>
@@ -3620,7 +3619,7 @@ export function AdminScreen({
                         </p>
                         {s.raw_photos && s.raw_photos.length > 0 && (
                           <span className="inline-block mt-1 text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                            📸 {s.raw_photos.length} Foto Asli (Raw)
+                            {s.raw_photos.length} Foto Asli (Raw)
                           </span>
                         )}
                       </div>
@@ -3671,7 +3670,6 @@ export function AdminScreen({
                   <div className="flex items-center gap-3 flex-wrap">
                     <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
                       <span>Antrian & Riwayat Cetak Foto</span>
-                      <span className="text-xl">🖨️</span>
                     </h2>
                     {recentSessions.filter((s) => s.print_status !== "printed").length > 0 ? (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500 text-white shadow-xs animate-pulse">
@@ -3818,8 +3816,8 @@ export function AdminScreen({
                     if (pendingList.length === 0) {
                       return (
                         <div className="bg-white rounded-3xl border border-slate-200/90 p-12 text-center text-slate-400 space-y-3 shadow-xs">
-                          <div className="w-16 h-16 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center mx-auto text-3xl">
-                            🖨️
+                          <div className="w-16 h-16 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center mx-auto">
+                            <Printer className="w-8 h-8 text-amber-500" />
                           </div>
                           <h3 className="text-base font-bold text-slate-800">
                             {printSearchQuery ? "Tidak ditemukan antrian yang cocok" : "Tidak Ada Antrian Cetak"}
@@ -3961,7 +3959,7 @@ export function AdminScreen({
                                   className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-98 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
                                 >
                                   <Printer className={`w-4 h-4 ${isPrintingThis ? "animate-bounce" : ""}`} />
-                                  <span>{isPrintingThis ? "Sedang Memproses Cetak..." : `🖨️ CETAK SEKARANG (${currentCopies} Lembar)`}</span>
+                                  <span>{isPrintingThis ? "Sedang Memproses Cetak..." : `Cetak Sekarang (${currentCopies} Lembar)`}</span>
                                 </button>
 
                                 <div className="flex items-center justify-between gap-2 text-xs">
@@ -3971,7 +3969,7 @@ export function AdminScreen({
                                     className="flex-1 py-1.5 px-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold transition-colors cursor-pointer text-center"
                                     title="Tandai sudah dicetak tanpa membuka dialog print browser"
                                   >
-                                    ✓ Tandai Selesai
+                                    Tandai Selesai
                                   </button>
 
                                   <button
@@ -3980,7 +3978,7 @@ export function AdminScreen({
                                     className="py-1.5 px-2.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] font-semibold transition-colors cursor-pointer"
                                     title="Lihat Pratinjau"
                                   >
-                                    👁️ Detail
+                                    Detail
                                   </button>
 
                                   <button
@@ -4020,8 +4018,8 @@ export function AdminScreen({
                     if (historyList.length === 0) {
                       return (
                         <div className="bg-white rounded-3xl border border-slate-200/90 p-12 text-center text-slate-400 space-y-3 shadow-xs">
-                          <div className="w-16 h-16 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto text-3xl">
-                            📋
+                          <div className="w-16 h-16 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                            <CheckCircle2 className="w-8 h-8 text-slate-400" />
                           </div>
                           <h3 className="text-base font-bold text-slate-800">
                             {printSearchQuery ? "Tidak ditemukan riwayat yang cocok" : "Belum Ada Riwayat Cetak"}
@@ -4239,7 +4237,7 @@ export function AdminScreen({
                     className="flex-1 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
                   >
                     <Printer className="w-4 h-4" />
-                    <span>🖨️ Cetak Foto Ini Sekarang</span>
+                    <span>Cetak Foto Ini Sekarang</span>
                   </button>
                 </div>
               </div>
@@ -4255,7 +4253,6 @@ export function AdminScreen({
                   <div className="flex items-center gap-3 flex-wrap">
                     <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
                       <span>Catatan Keuangan & Kas</span>
-                      <span className="text-xl">💰</span>
                     </h2>
                     <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
                       netBalance >= 0 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-700"
@@ -4277,7 +4274,7 @@ export function AdminScreen({
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition-all cursor-pointer active:scale-95"
                   >
                     <ArrowDownLeft className="w-4 h-4" />
-                    <span>+ Catat Pemasukan</span>
+                    <span>Catat Pemasukan</span>
                   </button>
 
                   <button
@@ -4286,7 +4283,7 @@ export function AdminScreen({
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white text-xs font-bold shadow-md shadow-red-600/20 transition-all cursor-pointer active:scale-95"
                   >
                     <ArrowUpRight className="w-4 h-4" />
-                    <span>- Catat Pengeluaran</span>
+                    <span>Catat Pengeluaran</span>
                   </button>
 
                   <button
@@ -4413,21 +4410,23 @@ export function AdminScreen({
                     <button
                       type="button"
                       onClick={() => setFinanceTypeFilter("income")}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                         financeTypeFilter === "income" ? "bg-emerald-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
                       }`}
                     >
-                      <span>🟢 Pemasukan</span>
+                      <ArrowDownLeft className="w-3.5 h-3.5" />
+                      <span>Pemasukan</span>
                       <span className="text-[10px] opacity-80">({financeTransactions.filter((t) => t.type === "income").length})</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setFinanceTypeFilter("expense")}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                         financeTypeFilter === "expense" ? "bg-rose-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
                       }`}
                     >
-                      <span>🔴 Pengeluaran</span>
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                      <span>Pengeluaran</span>
                       <span className="text-[10px] opacity-80">({financeTransactions.filter((t) => t.type === "expense").length})</span>
                     </button>
                   </div>
@@ -4455,12 +4454,12 @@ export function AdminScreen({
                       <option value="all">Semua Kategori</option>
                       <optgroup label="Pemasukan">
                         {INCOME_CATEGORIES.map((c) => (
-                          <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>
+                          <option key={c.id} value={c.id}>{c.label}</option>
                         ))}
                       </optgroup>
                       <optgroup label="Pengeluaran">
                         {EXPENSE_CATEGORIES.map((c) => (
-                          <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>
+                          <option key={c.id} value={c.id}>{c.label}</option>
                         ))}
                       </optgroup>
                     </select>
@@ -4520,8 +4519,8 @@ export function AdminScreen({
                   if (filtered.length === 0) {
                     return (
                       <div className="p-12 text-center flex flex-col items-center justify-center gap-3">
-                        <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl">
-                          💰
+                        <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                          <Wallet className="w-8 h-8 text-emerald-600" />
                         </div>
                         <h4 className="font-bold text-slate-800 text-sm">Belum Ada Transaksi Keuangan</h4>
                         <p className="text-xs text-slate-500 max-w-sm">
@@ -4534,16 +4533,18 @@ export function AdminScreen({
                             <button
                               type="button"
                               onClick={handleOpenAddIncomeModal}
-                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer"
+                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
                             >
-                              + Catat Pemasukan Pertama
+                              <ArrowDownLeft className="w-3.5 h-3.5" />
+                              <span>Catat Pemasukan Pertama</span>
                             </button>
                             <button
                               type="button"
                               onClick={handleOpenAddExpenseModal}
-                              className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all cursor-pointer"
+                              className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
                             >
-                              - Catat Pengeluaran
+                              <ArrowUpRight className="w-3.5 h-3.5" />
+                              <span>Catat Pengeluaran</span>
                             </button>
                           </div>
                         )}
@@ -4595,10 +4596,9 @@ export function AdminScreen({
                                   {/* Tipe & Kategori */}
                                   <td className="py-3 px-4 whitespace-nowrap">
                                     <div className="flex items-center gap-1.5">
-                                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold ${
                                         isInc ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
                                       }`}>
-                                        <span>{catInfo.emoji}</span>
                                         <span>{catInfo.label}</span>
                                       </span>
                                     </div>
@@ -4623,8 +4623,7 @@ export function AdminScreen({
 
                                   {/* Metode Pembayaran */}
                                   <td className="py-3 px-4 whitespace-nowrap text-slate-700">
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-[11px] font-medium">
-                                      <span>{payInfo.emoji}</span>
+                                    <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-[11px] font-medium">
                                       <span>{payInfo.label}</span>
                                     </span>
                                   </td>
@@ -4634,7 +4633,7 @@ export function AdminScreen({
                                     <span className={`font-black text-sm ${
                                       isInc ? "text-emerald-600" : "text-rose-600"
                                     }`}>
-                                      {isInc ? "+" : "-"} {formatRupiah(tx.amount)}
+                                      {formatRupiah(tx.amount)}
                                     </span>
                                   </td>
 
@@ -4745,7 +4744,7 @@ export function AdminScreen({
                       }`}
                     >
                       <ArrowDownLeft className="w-4 h-4" />
-                      <span>🟢 Pemasukan</span>
+                      <span>Pemasukan</span>
                     </button>
                     <button
                       type="button"
@@ -4763,7 +4762,7 @@ export function AdminScreen({
                       }`}
                     >
                       <ArrowUpRight className="w-4 h-4" />
-                      <span>🔴 Pengeluaran</span>
+                      <span>Pengeluaran</span>
                     </button>
                   </div>
 
@@ -4815,7 +4814,7 @@ export function AdminScreen({
                       >
                         {(txType === "income" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).map((cat) => (
                           <option key={cat.id} value={cat.id}>
-                            {cat.emoji} {cat.label}
+                            {cat.label}
                           </option>
                         ))}
                       </select>
@@ -4831,7 +4830,7 @@ export function AdminScreen({
                       >
                         {PAYMENT_METHODS.map((method) => (
                           <option key={method.id} value={method.id}>
-                            {method.emoji} {method.label}
+                            {method.label}
                           </option>
                         ))}
                       </select>
@@ -4899,7 +4898,7 @@ export function AdminScreen({
                   {/* Error Alert */}
                   {txModalError && (
                     <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center gap-2">
-                      <span>⚠️</span>
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" />
                       <span>{txModalError}</span>
                     </div>
                   )}
@@ -4921,7 +4920,7 @@ export function AdminScreen({
                           : "bg-rose-600 hover:bg-rose-700 shadow-rose-600/20"
                       }`}
                     >
-                      <span>💾 Simpan Transaksi</span>
+                      <span>Simpan Transaksi</span>
                     </button>
                   </div>
                 </form>
