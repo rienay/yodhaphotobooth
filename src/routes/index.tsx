@@ -1142,9 +1142,10 @@ function FilterScreen({
   }, [activeFilters, selectedFilter, setSelectedFilter]);
 
   const [cameraZoom] = useState<number>(() => {
-    if (typeof window === "undefined") return 0.85;
+    if (typeof window === "undefined") return 1.0;
     const saved = localStorage.getItem("yodha_camera_zoom");
-    return saved ? parseFloat(saved) : 0.85;
+    const parsed = saved ? parseFloat(saved) : 1.0;
+    return parsed < 1.0 ? 1.0 : parsed;
   });
 
   useEffect(() => {
@@ -1207,7 +1208,7 @@ function FilterScreen({
             muted
             className="w-full h-full object-cover transition-all duration-300"
             style={{
-              transform: `scaleX(-1) scale(${cameraZoom})`,
+              transform: Math.max(1.0, cameraZoom) > 1.001 ? `scaleX(-1) scale(${Math.max(1.0, cameraZoom)})` : "scaleX(-1)",
               transformOrigin: "center center",
               filter: liveFilterCss,
             }}
@@ -1559,9 +1560,10 @@ function ShootScreen({
   }, [overlaySrc, activeTemplate, layout, variantConfig]);
 
   const [cameraZoom, setCameraZoom] = useState<number>(() => {
-    if (typeof window === "undefined") return 0.85;
+    if (typeof window === "undefined") return 1.0;
     const saved = localStorage.getItem("yodha_camera_zoom");
-    return saved ? parseFloat(saved) : 0.85;
+    const parsed = saved ? parseFloat(saved) : 1.0;
+    return parsed < 1.0 ? 1.0 : parsed;
   });
 
   useEffect(() => {
@@ -1629,10 +1631,11 @@ function ShootScreen({
       ctx.filter = filterObj.css;
     }
 
-    // Apply digital zoom scale if adjusted
-    if (cameraZoom !== 1.0) {
+    // Apply digital zoom scale if adjusted (clamped to min 1.0 to ensure zero black borders)
+    const effectiveZoom = Math.max(1.0, cameraZoom || 1.0);
+    if (effectiveZoom > 1.001) {
       ctx.translate(w / 2, h / 2);
-      ctx.scale(cameraZoom, cameraZoom);
+      ctx.scale(effectiveZoom, effectiveZoom);
       ctx.translate(-w / 2, -h / 2);
     }
 
@@ -1706,7 +1709,7 @@ function ShootScreen({
           muted
           className="absolute inset-0 w-full h-full object-cover transition-transform duration-200"
           style={{
-            transform: `scaleX(-1) scale(${cameraZoom})`,
+            transform: Math.max(1.0, cameraZoom || 1.0) > 1.001 ? `scaleX(-1) scale(${Math.max(1.0, cameraZoom || 1.0)})` : "scaleX(-1)",
             transformOrigin: "center center",
             filter: selectedAiEffect
               ? getAiPreviewCss(aiEffects.find(a => a.id === selectedAiEffect)?.shaderType || "3d_movie")
@@ -1792,50 +1795,6 @@ function ShootScreen({
             <span>{isFullscreen ? "⊠" : "⊡"}</span>
             <span>{isFullscreen ? "KELUAR PENUH" : "LAYAR PENUH"}</span>
           </button>
-
-          {/* Quick Zoom / FOV Controller Pill */}
-          <div
-            className="flex items-center gap-1 px-2 py-1 rounded"
-            style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)" }}
-          >
-            <span className="pixel text-white/80 text-[8px] mr-0.5">ZOOM:</span>
-            <button
-              type="button"
-              onClick={() => {
-                const next = Math.max(0.65, Math.round((cameraZoom - 0.05) * 100) / 100);
-                setCameraZoom(next);
-                localStorage.setItem("yodha_camera_zoom", String(next));
-              }}
-              className="w-5 h-5 rounded bg-white/15 hover:bg-white/30 active:scale-95 text-white text-[11px] font-bold flex items-center justify-center cursor-pointer"
-              title="Perluas Pandangan (Zoom Out / Wide)"
-            >
-              -
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const next = cameraZoom < 0.85 ? 1.0 : cameraZoom > 1.05 ? 0.8 : 0.85;
-                setCameraZoom(next);
-                localStorage.setItem("yodha_camera_zoom", String(next));
-              }}
-              className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-amber-300 font-mono text-[9px] font-bold cursor-pointer"
-              title="Ganti Mode Wide (0.85x) / Normal (1.0x)"
-            >
-              {cameraZoom.toFixed(2)}x
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const next = Math.min(1.35, Math.round((cameraZoom + 0.05) * 100) / 100);
-                setCameraZoom(next);
-                localStorage.setItem("yodha_camera_zoom", String(next));
-              }}
-              className="w-5 h-5 rounded bg-white/15 hover:bg-white/30 active:scale-95 text-white text-[11px] font-bold flex items-center justify-center cursor-pointer"
-              title="Perdekat (Zoom In)"
-            >
-              +
-            </button>
-          </div>
         </div>
         <div className="px-3 py-1.5 rounded w-fit" style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)" }}>
           <span className="pixel text-white text-[9px]">{statusText()}</span>
@@ -2268,8 +2227,8 @@ function ReviewScreen({
     if (ctx) {
       ctx.translate(w, 0);
       ctx.scale(-1, 1);
-      const savedZoom = parseFloat(localStorage.getItem("yodha_camera_zoom") || "0.85") || 0.85;
-      if (savedZoom !== 1.0) {
+      const savedZoom = Math.max(1.0, parseFloat(localStorage.getItem("yodha_camera_zoom") || "1.0") || 1.0);
+      if (savedZoom > 1.001) {
         ctx.translate(w / 2, h / 2);
         ctx.scale(savedZoom, savedZoom);
         ctx.translate(-w / 2, -h / 2);

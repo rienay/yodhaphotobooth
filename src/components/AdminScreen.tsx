@@ -467,9 +467,10 @@ export function AdminScreen({
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
   const [cameraZoom, setCameraZoom] = useState<number>(() => {
-    if (typeof window === "undefined") return 0.85;
+    if (typeof window === "undefined") return 1.0;
     const saved = localStorage.getItem("yodha_camera_zoom");
-    return saved ? parseFloat(saved) : 0.85;
+    const parsed = saved ? parseFloat(saved) : 1.0;
+    return parsed < 1.0 ? 1.0 : parsed;
   });
 
   // Database status
@@ -584,10 +585,15 @@ export function AdminScreen({
       setSelectedDevice(val || localStorage.getItem("yodha_camera_device_id") || "");
     });
 
-    // Camera zoom setting
-    settingsDB.getSetting<number>("camera_zoom", 0.85).then((val) => {
+    // Camera zoom setting (minimal 1.00x agar tidak ada margin/ruang hitam yang masuk ke bingkai)
+    settingsDB.getSetting<number>("camera_zoom", 1.0).then((val) => {
       if (typeof val === "number" && !isNaN(val)) {
-        setCameraZoom(val);
+        const safeVal = Math.max(1.0, val);
+        setCameraZoom(safeVal);
+        if (safeVal !== val) {
+          settingsDB.saveSetting("camera_zoom", safeVal);
+          localStorage.setItem("yodha_camera_zoom", String(safeVal));
+        }
       }
     });
 
@@ -1327,7 +1333,7 @@ export function AdminScreen({
   };
 
   const handleZoomChange = (val: number) => {
-    const clamped = Math.max(0.65, Math.min(1.35, Math.round(val * 100) / 100));
+    const clamped = Math.max(1.00, Math.min(1.80, Math.round(val * 100) / 100));
     setCameraZoom(clamped);
     settingsDB.saveSetting("camera_zoom", clamped);
     localStorage.setItem("yodha_camera_zoom", String(clamped));
@@ -5031,13 +5037,13 @@ export function AdminScreen({
                       muted
                       className="w-full h-full object-cover transition-transform duration-150"
                       style={{
-                        transform: `scaleX(-1) scale(${cameraZoom})`,
+                        transform: cameraZoom > 1.001 ? `scaleX(-1) scale(${cameraZoom})` : "scaleX(-1)",
                         transformOrigin: "center center",
                       }}
                     />
                     <div className="absolute top-3 left-3 bg-black/60 text-white text-[10px] px-2 py-1 rounded-md font-mono flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                      <span>Live Stream (16:9 Widescreen)</span>
+                      <span>Live Stream (16:9 Widescreen Layar Penuh)</span>
                     </div>
                   </div>
                 </div>
@@ -5047,38 +5053,38 @@ export function AdminScreen({
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div>
                       <label className="block text-xs font-bold text-slate-800">
-                        Sudut Pandang / Zoom Kamera (Field of View)
+                        Zoom Kamera Kiosk (Digital Zoom)
                       </label>
                       <p className="text-[11px] text-slate-500 mt-0.5">
-                        Turunkan zoom (misal ke 0.80x atau 0.85x) agar tangkapan kamera lebih luas (wide) dan wajah tidak terlalu dekat/terpotong.
+                        Tingkat zoom kamera untuk layar pemotretan pelanggan. Minimal 1.00x agar tampilan selalu penuh dan tidak ada ruang/margin hitam yang masuk ke dalam bingkai foto.
                       </p>
                     </div>
                     <span className="font-mono font-bold text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg border border-blue-200">
-                      {cameraZoom.toFixed(2)}x {cameraZoom < 1.0 ? "(Wide / Luas)" : cameraZoom === 1.0 ? "(Standar 1:1)" : "(Zoom Dekat)"}
+                      {cameraZoom.toFixed(2)}x {cameraZoom <= 1.01 ? "(Standar Layar Penuh)" : "(Digital Zoom Dekat)"}
                     </span>
                   </div>
 
                   <div className="flex items-center gap-3">
-                    <span className="text-xs font-semibold text-slate-500 shrink-0">0.70x (Sangat Luas)</span>
+                    <span className="text-xs font-semibold text-slate-500 shrink-0">1.00x (Full Size)</span>
                     <input
                       type="range"
-                      min="0.70"
-                      max="1.30"
+                      min="1.00"
+                      max="1.80"
                       step="0.05"
                       value={cameraZoom}
                       onChange={(e) => handleZoomChange(parseFloat(e.target.value))}
                       className="w-full accent-blue-600 h-2 bg-slate-200 rounded-lg cursor-pointer"
                     />
-                    <span className="text-xs font-semibold text-slate-500 shrink-0">1.30x (Dekat)</span>
+                    <span className="text-xs font-semibold text-slate-500 shrink-0">1.80x (Dekat)</span>
                   </div>
 
                   {/* Preset Buttons */}
                   <div className="flex items-center gap-2 pt-1 flex-wrap">
                     {[
-                      { label: "🔍 0.80x (Ultra Wide)", val: 0.80 },
-                      { label: "📸 0.85x (Wide Rekomendasi)", val: 0.85 },
-                      { label: "✨ 1.00x (Standar Kamera)", val: 1.00 },
-                      { label: "🔎 1.15x (Zoom Sedang)", val: 1.15 },
+                      { label: "1.00x (Standar Layar Penuh)", val: 1.00 },
+                      { label: "1.10x (Zoom Sedikit)", val: 1.10 },
+                      { label: "1.20x (Zoom Dekat)", val: 1.20 },
+                      { label: "1.30x (Close-Up)", val: 1.30 },
                     ].map((p) => (
                       <button
                         key={p.val}
