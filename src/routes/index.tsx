@@ -205,38 +205,26 @@ function getDefaultTemplates(disabledIds: string[]): Template[] {
 
 /* ───────────────────────── Main Component ───────────────────────── */
 function Photobooth() {
+  const [isMounted, setIsMounted] = useState(false);
   const search = Route.useSearch();
-  const [isAdminAuth, setIsAdminAuth] = useState<boolean>(() => isAdminAuthenticated());
-  const [isBoothMode, setIsBoothMode] = useState<boolean>(() => {
-    if (search?.mode === "booth") return true;
-    if (typeof window === "undefined") return false;
-    const params = new URLSearchParams(window.location.search);
-    return params.get("mode") === "booth";
-  });
+  const [isAdminAuth, setIsAdminAuth] = useState<boolean>(false);
+  const [isBoothMode, setIsBoothMode] = useState<boolean>(false);
   const [showExitModal, setShowExitModal] = useState(false);
   const [exitPin, setExitPin] = useState("");
   const [exitError, setExitError] = useState("");
 
-  const [customerSessionCode, setCustomerSessionCode] = useState<string | null>(() => {
-    if (search?.session) return search.session;
-    if (search?.download) return search.download;
-    if (typeof window === "undefined") return null;
-    const params = new URLSearchParams(window.location.search);
-    return params.get("session") || params.get("download") || null;
-  });
+  const [customerSessionCode, setCustomerSessionCode] = useState<string | null>(null);
 
   useEffect(() => {
-    const code = search?.session || search?.download;
+    setIsMounted(true);
+    setIsAdminAuth(isAdminAuthenticated());
+    const isBooth = search?.mode === "booth" || (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mode") === "booth");
+    setIsBoothMode(isBooth);
+    const code = search?.session || search?.download || (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("session") || new URLSearchParams(window.location.search).get("download") : null);
     if (code) {
       setCustomerSessionCode(code);
-    } else if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const pCode = params.get("session") || params.get("download");
-      if (pCode) {
-        setCustomerSessionCode(pCode);
-      }
     }
-  }, [search?.session, search?.download]);
+  }, [search]);
 
   const [selectedFilter, setSelectedFilter] = useState<string>("normal");
 
@@ -409,6 +397,17 @@ function Photobooth() {
       setExitError("PIN Admin salah!");
     }
   };
+
+  // Prevent hydration mismatch between SSR (no localStorage) and Client browser
+  if (!isMounted) {
+    return (
+      <div className="min-h-screen bg-[#FDFBF7] flex items-center justify-center">
+        <div className="pixel text-sm text-[#3A2A40] animate-pulse flex items-center gap-2">
+          <span>📸</span> Memuat Photobooth...
+        </div>
+      </div>
+    );
+  }
 
   // ────────────────── MODE 0: CUSTOMER DOWNLOAD PORTAL (QR CODE SCAN) ──────────────────
   // Dedicated customer page: 100% isolated, NO access to booth kiosk or admin dashboard
