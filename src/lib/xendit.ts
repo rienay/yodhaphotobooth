@@ -16,10 +16,12 @@ export interface XenditQrCode {
   created?: string;
 }
 
+const FALLBACK_DEFAULT_KEY = "xnd_development_MxYJIMOGLCQZNIPnDKjd2r2c4eTtALAtvLmGqq3ur7p6Zqjn1F2WDIfCgR8RnZI";
+
 const envKey = ((typeof import.meta !== "undefined" && import.meta.env?.VITE_XENDIT_SECRET_KEY) || "").trim();
 
 export const DEFAULT_XENDIT_CONFIG: XenditConfig = {
-  apiKey: envKey,
+  apiKey: envKey || FALLBACK_DEFAULT_KEY,
   paymentEnabled: true,
   price: 35000,
 };
@@ -34,7 +36,7 @@ export function getXenditConfig(): XenditConfig {
     }
   } catch {}
 
-  let apiKey = envApiKey;
+  let apiKey = "";
   let paymentEnabled = true;
   let price = 35000;
 
@@ -54,6 +56,11 @@ export function getXenditConfig(): XenditConfig {
     }
   } catch (e) {
     console.warn("Failed to load Xendit config from localStorage:", e);
+  }
+
+  // Fallback ke ENV atau default key
+  if (!apiKey) {
+    apiKey = envApiKey || FALLBACK_DEFAULT_KEY;
   }
 
   return {
