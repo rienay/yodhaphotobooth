@@ -30,28 +30,7 @@ import yodhaLogo from "@/assets/yodha.png";
 import arthanaLogo from "@/assets/arthana.png";
 import gachaAsset from "@/assets/GACHA MACHINE.png";
 import flowerAsset from "@/assets/FLOWER.png";
-// PNC assets — 1x1
-// import pnc3Asset from "@/assets/pnc/1x1/ekskusif/3.png";
-// import pnc4Asset from "@/assets/pnc/1x1/ekskusif/4.png";
-import pnc15Asset from "@/assets/pnc/1x1/15.png";
-
-// PNC assets — 4x2
-// import pnc4x2_9Asset from "@/assets/pnc/4x2/9.png";
-// import pnc4x2_10Asset from "@/assets/pnc/4x2/10.png";
-import pnc4x2_11Asset from "@/assets/pnc/4x2/11.png";
-import pnc4x2_12Asset from "@/assets/pnc/4x2/12.png";
-import pnc4x2_13Asset from "@/assets/pnc/4x2/13.png";
-import pnc4x2_14Asset from "@/assets/pnc/4x2/14.png";
-import pnc4x2_15Asset from "@/assets/pnc/4x2/15.png";
-import pnc4x2_16Asset from "@/assets/pnc/4x2/16.png";
-import pnc4x2_17Asset from "@/assets/pnc/4x2/17.png";
-import pnc4x2_18Asset from "@/assets/pnc/4x2/18.png";
-
-// RAICAB assets
-import raicab15Asset from "@/assets/raicab/15.png";
-import raicab16Asset from "@/assets/raicab/16.png";
-import raicab17Asset from "@/assets/raicab/17.png";
-import raicab18Asset from "@/assets/raicab/18.png";
+// Default templates are managed dynamically via Admin (Supabase / IndexedDB)
 
 import { CustomerDownloadPortal } from "@/components/CustomerDownloadPortal";
 import { PaymentScreen } from "@/components/PaymentScreen";
@@ -184,31 +163,11 @@ function useFullscreen(enabled: boolean = false) {
   return { isFullscreen, toggle };
 }
 
-function getDefaultTemplates(disabledIds: string[]): Template[] {
-  const e = (id: string) => !disabledIds.includes(id);
-  return [
-    // ── 4x2 (Grid 8 Foto) ─────────────────────────────────
-    { id: "4x2_raicab16", name: "RAICAB 16", layout: "4x2", img: raicab16Asset, isCustom: false, enabled: e("4x2_raicab16"), presetId: "raicab16" },
-    { id: "4x2_raicab17", name: "RAICAB 17", layout: "4x2", img: raicab17Asset, isCustom: false, enabled: e("4x2_raicab17"), presetId: "raicab17" },
-    { id: "4x2_raicab18", name: "RAICAB 18", layout: "4x2", img: raicab18Asset, isCustom: false, enabled: e("4x2_raicab18"), presetId: "raicab18" },
-    // { id: "4x2_pnc9", name: "PNC 9", layout: "4x2", img: pnc4x2_9Asset, isCustom: false, enabled: e("4x2_pnc9"), presetId: "pnc9" },
-    // { id: "4x2_pnc10", name: "PNC 10", layout: "4x2", img: pnc4x2_10Asset, isCustom: false, enabled: e("4x2_pnc10"), presetId: "pnc10" },
-    { id: "4x2_pnc11", name: "PNC 11", layout: "4x2", img: pnc4x2_11Asset, isCustom: false, enabled: e("4x2_pnc11"), presetId: "pnc11" },
-    { id: "4x2_pnc12", name: "PNC 12", layout: "4x2", img: pnc4x2_12Asset, isCustom: false, enabled: e("4x2_pnc12"), presetId: "pnc12" },
-    { id: "4x2_pnc13", name: "PNC 13", layout: "4x2", img: pnc4x2_13Asset, isCustom: false, enabled: e("4x2_pnc13"), presetId: "pnc13" },
-    { id: "4x2_pnc14", name: "PNC 14", layout: "4x2", img: pnc4x2_14Asset, isCustom: false, enabled: e("4x2_pnc14"), presetId: "pnc14" },
-    { id: "4x2_pnc15", name: "PNC 15", layout: "4x2", img: pnc4x2_15Asset, isCustom: false, enabled: e("4x2_pnc15"), presetId: "pnc15" },
-    { id: "4x2_pnc16", name: "PNC 16", layout: "4x2", img: pnc4x2_16Asset, isCustom: false, enabled: e("4x2_pnc16"), presetId: "pnc16" },
-    { id: "4x2_pnc17", name: "PNC 17", layout: "4x2", img: pnc4x2_17Asset, isCustom: false, enabled: e("4x2_pnc17"), presetId: "pnc17" },
-    { id: "4x2_pnc18", name: "PNC 18", layout: "4x2", img: pnc4x2_18Asset, isCustom: false, enabled: e("4x2_pnc18"), presetId: "pnc18" },
-
-    // ── 1x1 (Foto Tunggal) ────────────────────────────────
-    { id: "1x1_raicab15", name: "RAICAB 15", layout: "1x1", img: raicab15Asset, isCustom: false, enabled: e("1x1_raicab15"), presetId: "raicab15" },
-    { id: "1x1_pnc15", name: "PNC 15", layout: "1x1", img: pnc15Asset, isCustom: false, enabled: e("1x1_pnc15"), presetId: "pnc15" },
-    // { id: "1x1_pnc3", name: "PNC 3", layout: "1x1", img: pnc3Asset, isCustom: false, enabled: e("1x1_pnc3"), presetId: "pnc3" },
-    // { id: "1x1_pnc4", name: "PNC 4", layout: "1x1", img: pnc4Asset, isCustom: false, enabled: e("1x1_pnc4"), presetId: "pnc4" },
-  ];
+function getDefaultTemplates(_disabledIds: string[] = []): Template[] {
+  // All templates are dynamically managed via Admin Screen / Supabase / IndexedDB
+  return [];
 }
+
 
 /* ───────────────────────── Main Component ───────────────────────── */
 function Photobooth() {
@@ -240,7 +199,7 @@ function Photobooth() {
 
   const [screen, setScreen] = useState<Screen>("home");
   const [layout, setLayout] = useState<LayoutId>("4x2");
-  const [variant, setVariant] = useState<string>("raicab16");
+  const [variant, setVariant] = useState<string>("default");
   const frame: FrameId = "template";
   const [photos, setPhotos] = useState<string[]>([]);
   const [liveVideos, setLiveVideos] = useState<string[]>([]);
@@ -303,7 +262,20 @@ function Photobooth() {
 
     try {
       const customTemplates = await templateDB.getAllTemplates();
-      setTemplates([...defaults, ...customTemplates]);
+      const all = [...defaults, ...customTemplates];
+      setTemplates(all);
+      if (all.length > 0) {
+        setVariant((currentVariant) => {
+          const exists = all.some((t) => (t.id === currentVariant || t.presetId === currentVariant) && t.enabled);
+          if (exists && currentVariant !== "default") return currentVariant;
+          const firstEnabled = all.find((t) => t.enabled);
+          if (firstEnabled) {
+            setLayout(firstEnabled.layout);
+            return firstEnabled.isCustom ? firstEnabled.id : firstEnabled.id.replace(firstEnabled.layout + "_", "");
+          }
+          return "default";
+        });
+      }
     } catch (e) {
       console.error(e);
       setTemplates(defaults);
@@ -885,17 +857,31 @@ function FrameScreen({
     }
   }, [availableLayouts, selectedLayout, setSelectedLayout, templates, setVariant]);
 
+  // Auto-select first enabled template if current variant is not in enabledTemplates
+  useEffect(() => {
+    if (enabledTemplates.length > 0) {
+      const currentValid = enabledTemplates.some((t) => {
+        const tVal = t.isCustom ? t.id : t.id.replace(selectedLayout + "_", "");
+        return tVal === variant;
+      });
+      if (!currentValid) {
+        const firstT = enabledTemplates[0];
+        setVariant(firstT.isCustom ? firstT.id : firstT.id.replace(selectedLayout + "_", ""));
+      }
+    }
+  }, [enabledTemplates, selectedLayout, variant, setVariant]);
+
   if (availableLayouts.length === 0) {
     return (
       <div className="w-full text-center space-y-6">
         <div className="speech inline-block mb-4">
           <p className="pixel text-xs">PILIH UKURAN FOTO!</p>
         </div>
-        <div className="pixel-box p-8 bg-red-50 border-2 border-red-500 text-red-700 space-y-4">
-          <span className="text-4xl block">⚠️</span>
-          <span className="pixel text-[10px] font-bold block">SEMUA LAYOUT & FRAME TELAH DINONAKTIFKAN!</span>
+        <div className="pixel-box p-8 bg-amber-50 border-2 border-amber-500 text-amber-900 space-y-4">
+          <span className="text-4xl block">🖼️</span>
+          <span className="pixel text-[10px] font-bold block">BELUM ADA TEMPLATE FRAME!</span>
           <p className="text-xs" style={{ fontFamily: "var(--font-body)", fontSize: "1.2rem" }}>
-            Silakan buka panel Admin untuk mengaktifkan minimal satu frame.
+            Silakan buka panel Admin untuk mengunggah template frame baru.
           </p>
         </div>
         <button className="pixel-btn-powder" onClick={onBack}>◀ Kembali</button>
@@ -1024,6 +1010,7 @@ function FrameScreen({
                           className="h-[155px] sm:h-[165px] w-auto max-w-full object-contain pointer-events-none select-none block"
                           alt={t.name}
                           loading="lazy"
+                          decoding="async"
                         />
                       ) : (
                         <div className="w-[105px] h-[155px] sm:h-[165px] bg-white flex flex-col justify-around p-1 gap-0.5">

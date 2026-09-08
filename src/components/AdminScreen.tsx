@@ -3021,71 +3021,92 @@ export function AdminScreen({
               </div>
 
               {/* Frames Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-                {filteredTemplates.map((template) => (
-                  <div
-                    key={template.id}
-                    className={`bg-white rounded-2xl border p-4 flex flex-col justify-between space-y-4 shadow-xs transition-all ${
-                      template.enabled ? "border-slate-200/90" : "border-slate-200/60 bg-slate-50/70 opacity-60"
-                    }`}
+              {filteredTemplates.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-dashed border-slate-200 p-12 text-center flex flex-col items-center justify-center">
+                  <div className="w-16 h-16 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-4">
+                    <Plus className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-base font-bold text-slate-800 mb-1">Belum Ada Template Frame</h3>
+                  <p className="text-sm text-slate-500 max-w-md mb-5">
+                    Semua template default telah dibersihkan. Anda dapat menambahkan template frame buatan sendiri dengan mengklik tombol di bawah ini.
+                  </p>
+                  <button
+                    onClick={() => setShowUploadModal(true)}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-600/20 transition-all cursor-pointer"
                   >
-                    <div className="space-y-3">
-                      {/* Frame Preview container */}
-                      <div className="aspect-[3/4] bg-slate-100 rounded-xl border border-slate-200 flex items-center justify-center overflow-hidden p-2">
-                        {template.img ? (
-                          <img
-                            src={template.img}
-                            alt={template.name}
-                            className="max-h-full max-w-full object-contain bg-[repeating-conic-gradient(#ccc_0_25%,#fff_0_50%)] bg-[length:8px_8px] rounded"
-                          />
-                        ) : (
-                          <span className="text-xs text-slate-400 font-medium">Polos</span>
+                    <Plus className="w-4 h-4" />
+                    <span>+ Tambah Bingkai Baru</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+                  {filteredTemplates.map((template) => (
+                    <div
+                      key={template.id}
+                      className={`bg-white rounded-2xl border p-4 flex flex-col justify-between space-y-4 shadow-xs transition-all ${
+                        template.enabled ? "border-slate-200/90" : "border-slate-200/60 bg-slate-50/70 opacity-60"
+                      }`}
+                    >
+                      <div className="space-y-3">
+                        {/* Frame Preview container */}
+                        <div className="aspect-[3/4] bg-slate-100 rounded-xl border border-slate-200 flex items-center justify-center overflow-hidden p-2">
+                          {template.img ? (
+                            <img
+                              src={template.img}
+                              alt={template.name}
+                              loading="lazy"
+                              decoding="async"
+                              className="max-h-full max-w-full object-contain bg-[repeating-conic-gradient(#ccc_0_25%,#fff_0_50%)] bg-[length:8px_8px] rounded"
+                            />
+                          ) : (
+                            <span className="text-xs text-slate-400 font-medium">Polos</span>
+                          )}
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between gap-1">
+                            <h4 className="text-sm font-bold text-slate-900 truncate">{template.name}</h4>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold uppercase ${
+                              template.isCustom ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"
+                            }`}>
+                              {template.layout}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-0.5">Preset: {template.presetId}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100">
+                        <button
+                          onClick={() => onToggleTemplate(template.id, !template.enabled)}
+                          className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
+                            template.enabled
+                              ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                          }`}
+                        >
+                          {template.enabled ? <Check className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
+                          <span>{template.enabled ? "Aktif" : "Nonaktif"}</span>
+                        </button>
+
+                        {template.isCustom && (
+                          <button
+                            onClick={() => {
+                              if (confirm(`Hapus template frame "${template.name}"?`)) {
+                                onDeleteTemplate(template.id);
+                              }
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            title="Hapus Frame"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         )}
                       </div>
-
-                      <div>
-                        <div className="flex items-center justify-between gap-1">
-                          <h4 className="text-sm font-bold text-slate-900 truncate">{template.name}</h4>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold uppercase ${
-                            template.isCustom ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"
-                          }`}>
-                            {template.layout}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-0.5">Preset: {template.presetId}</p>
-                      </div>
                     </div>
-
-                    <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100">
-                      <button
-                        onClick={() => onToggleTemplate(template.id, !template.enabled)}
-                        className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
-                          template.enabled
-                            ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                        }`}
-                      >
-                        {template.enabled ? <Check className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
-                        <span>{template.enabled ? "Aktif" : "Nonaktif"}</span>
-                      </button>
-
-                      {template.isCustom && (
-                        <button
-                          onClick={() => {
-                            if (confirm(`Hapus template frame "${template.name}"?`)) {
-                              onDeleteTemplate(template.id);
-                            }
-                          }}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                          title="Hapus Frame"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
