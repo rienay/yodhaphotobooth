@@ -23,6 +23,9 @@ export interface PhotoboothSession {
   live_videos?: string[];
   raw_photos?: string[];
   total_photos?: number;
+  print_status?: "pending" | "printed" | "skipped";
+  print_copies?: number;
+  printed_at?: string;
   created_at?: string;
 }
 
@@ -252,6 +255,8 @@ export class SessionDB {
     const sessionData: PhotoboothSession = {
       ...session,
       id: session.id || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `sess_${Date.now()}`),
+      print_status: session.print_status || "pending",
+      print_copies: session.print_copies || 1,
       created_at: session.created_at || new Date().toISOString(),
     };
 
@@ -270,6 +275,9 @@ export class SessionDB {
           live_videos: sessionData.live_videos || [],
           raw_photos: sessionData.raw_photos || [],
           total_photos: sessionData.total_photos || 0,
+          print_status: sessionData.print_status,
+          print_copies: sessionData.print_copies,
+          printed_at: sessionData.printed_at || null,
           created_at: sessionData.created_at,
         };
         if (isUuid) {
@@ -330,6 +338,25 @@ export class SessionDB {
         localStorage.setItem(this.localKey, JSON.stringify(existing));
       }
     } catch (e) {}
+  }
+
+  async deleteSession(idOrCode: string): Promise<void> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        await supabase
+          .from("photobooth_sessions")
+          .delete()
+          .or(`session_code.eq.${idOrCode},id.eq.${idOrCode}`);
+      } catch (err) {
+        console.warn("Failed deleting session from Supabase:", err);
+      }
+    }
+
+    try {
+      const existing: PhotoboothSession[] = JSON.parse(localStorage.getItem(this.localKey) || "[]");
+      const filtered = existing.filter((s) => s.session_code !== idOrCode && s.id !== idOrCode);
+      localStorage.setItem(this.localKey, JSON.stringify(filtered));
+    } catch {}
   }
 
   /**

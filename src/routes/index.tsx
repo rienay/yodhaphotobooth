@@ -16,8 +16,12 @@ import {
 import { CameraFilter, DEFAULT_PHOTO_FILTERS, loadLocalFilters } from "@/lib/filters";
 import {
   AiEffect,
+  AiProviderSettings,
   DEFAULT_AI_EFFECTS,
+  DEFAULT_AI_PROVIDER_SETTINGS,
   loadLocalAiEffects,
+  loadAiProviderSettings,
+  applyAiStylization,
   applyAiShaderToContext,
   getAiPreviewCss,
 } from "@/lib/aiEffects";
@@ -466,13 +470,13 @@ function Photobooth() {
   }
 
   return (
-    <main className="photobooth-kiosk min-h-screen flex flex-col items-center px-4 sm:px-8 py-6 sm:py-10">
+    <main className={`photobooth-kiosk min-h-screen flex flex-col items-center px-4 sm:px-8 ${screen === "frame" ? "py-2 sm:py-4" : "py-6 sm:py-10"}`}>
       <Header
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}
         showFullscreenBtn={screen !== "shoot"}
       />
-      <div className="w-full max-w-4xl flex-1 flex items-center justify-center py-4 sm:py-8">
+      <div className={`w-full ${screen === "frame" ? "max-w-6xl items-start pt-2 sm:pt-4" : "max-w-4xl items-center py-1 sm:py-2"} flex-1 flex justify-center`}>
         {screen === "home" && (
           <HomeScreen
             onStart={() => {
@@ -645,16 +649,16 @@ function Header({
   showFullscreenBtn?: boolean;
 }) {
   return (
-    <header className="w-full max-w-5xl flex items-center justify-between gap-4 mb-2">
+    <header className="w-full max-w-6xl flex items-center justify-between gap-4 mb-1">
       <div className="flex items-center gap-3">
         <div className="flex items-center">
-          <img src={yodhaLogo} alt="Yodha Logo" className="h-20 w-auto object-contain max-w-[150px]" />
+          <img src={yodhaLogo} alt="Yodha Logo" className="h-14 sm:h-16 w-auto object-contain max-w-[140px]" />
         </div>
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-sm sm:text-base">Yodha-Photobooth</h1>
           </div>
-          <p className="text-xs text-muted-foreground mt-1" style={{ fontFamily: "var(--font-body)", fontSize: "1.1rem" }}>
+          <p className="text-xs text-muted-foreground mt-0.5" style={{ fontFamily: "var(--font-body)", fontSize: "1.05rem" }}>
             ♡ jepret, simpan, kenang ♡
           </p>
         </div>
@@ -668,7 +672,7 @@ function Header({
           <img
             src={arthanaLogo}
             alt="Arthana Logo"
-            className="h-28 w-auto object-contain max-w-[180px] -my-6"
+            className="h-20 sm:h-22 w-auto object-contain max-w-[150px] -my-4"
             style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.15)) brightness(0.6)" }}
           />
         </button>
@@ -829,20 +833,8 @@ function FrameScreen({
   onNext: () => void;
   templates: Template[];
 }) {
-  const printInfo = PRINT_SIZES[selectedLayout];
   const enabledTemplates = templates.filter((t) => t.layout === selectedLayout && t.enabled);
   const availableLayouts = LAYOUTS.filter((l) => templates.some((t) => t.layout === l.id && t.enabled));
-  const [exSlideIdx, setExSlideIdx] = useState(0);
-  const regularScrollRef = useRef<HTMLDivElement>(null);
-  const [regularScrollIndex, setRegularScrollIndex] = useState(0);
-
-  const handleRegularScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const container = e.currentTarget;
-    const firstChild = container.firstElementChild as HTMLElement | null;
-    const itemWidth = firstChild ? firstChild.offsetWidth : 90;
-    const gap = 12;
-    setRegularScrollIndex(Math.round(container.scrollLeft / (itemWidth + gap)));
-  };
 
   // Auto-select the first available layout if current layout has no enabled templates
   useEffect(() => {
@@ -877,13 +869,20 @@ function FrameScreen({
     );
   }
 
+  // Exclusive frames: pnc3, pnc4, pnc5, pnc6
+  const exclusivePresetIds = ["pnc3", "pnc4", "pnc5", "pnc6"];
+  const getTemplateVal = (t: Template) => t.isCustom ? t.id : t.id.replace(selectedLayout + "_", "");
+
   return (
-    <div className="w-full flex flex-col gap-2">
-      {/* TOP: Layout selector — compact horizontal strip */}
+    <div className="w-full flex flex-col md:flex-row gap-4 items-start">
+      {/* LEFT: Layout selector — vertical list matching Yodha-Photobooth.svg */}
       <div
-        className="flex flex-row flex-nowrap gap-2 overflow-x-auto no-scrollbar"
-        style={{ scrollbarWidth: "none", WebkitOverflowScrolling: "touch" }}
+        className="flex flex-row md:flex-col gap-2 shrink-0 overflow-x-auto md:overflow-y-auto max-h-none md:max-h-[580px] p-1 select-none"
+        style={{ scrollbarWidth: "none" }}
       >
+        <div className="pixel text-[8px] font-bold text-center opacity-60 uppercase hidden md:block mb-0.5">
+          LAYOUT
+        </div>
         {availableLayouts.map((l) => {
           const active = selectedLayout === l.id;
           return (
@@ -899,225 +898,134 @@ function FrameScreen({
                   setVariant("default");
                 }
               }}
-              className="pixel-box flex flex-col items-center justify-center gap-1 transition-transform shrink-0"
+              className="pixel-box flex flex-col items-center justify-center gap-1 transition-all cursor-pointer shrink-0"
               style={{
-                width: "72px",
-                padding: "8px 6px",
+                width: "78px",
+                padding: "6px 4px",
                 background: active ? "var(--color-butter)" : "var(--color-card)",
                 transform: active ? "translate(-2px,-2px)" : undefined,
                 boxShadow: active
                   ? "0 4px 0 0 var(--color-ink),0 -4px 0 0 var(--color-ink),4px 0 0 0 var(--color-ink),-4px 0 0 0 var(--color-ink),6px 6px 0 0 var(--color-ink)"
-                  : undefined,
+                  : "0 2px 0 0 rgba(0,0,0,0.1)",
+                opacity: active ? 1 : 0.75,
               }}
+              title={l.desc || l.name}
             >
               <LayoutPreview layout={l.id} />
-              <span className="pixel text-[8px] font-bold leading-tight text-center">{l.name}</span>
+              <span className="pixel text-[7px] font-bold leading-tight text-center">{l.name}</span>
             </button>
           );
         })}
       </div>
 
+      {/* RIGHT: Frame Selection — NO outer purple box, frames adapt directly */}
+      <div className="flex-1 min-w-0 flex flex-col gap-2">
+        {/* Title */}
+        <div className="flex items-center justify-between pb-1">
+          <div className="pixel text-[11px] sm:text-xs font-bold tracking-wider text-[var(--color-ink)]">
+            PILIH DESAIN FRAME
+          </div>
+          <div className="pixel text-[7px] sm:text-[8px] opacity-70 bg-white/80 px-2 py-0.5 rounded border border-[var(--color-ink)]/20 shadow-xs">
+            {enabledTemplates.length} FRAME · SCROLL KEBAWAH 🖰
+          </div>
+        </div>
 
-      {/* BOTTOM: Frame selection — takes full remaining space */}
-      <div className="w-full flex flex-col gap-2">
-        {/* Frame Selection Container */}
-        <div className="w-full pixel-box p-3" style={{ background: "var(--color-lavender)" }}>
-          <div className="pixel text-[9px] text-center mb-2">PILIH DESAIN FRAME</div>
-
-
-          {enabledTemplates.length === 0 ? (
-            <div className="text-center p-4 bg-red-100 border-2 border-red-500 text-red-700 pixel text-[9px] w-full">
+        {enabledTemplates.length === 0 ? (
+          <div className="h-[430px] flex items-center justify-center">
+            <div className="text-center p-8 bg-red-50 border-2 border-red-500 text-red-700 pixel text-[9px] w-full max-w-md">
               ⚠️ SEMUA TEMPLATE DINONAKTIFKAN. AKTIFKAN MINIMAL SATU FRAME DI ADMIN.
             </div>
-          ) : (() => {
-            const aspectClass =
-              selectedLayout === "1x1" ? "aspect-[4/5]"
-                : selectedLayout === "2x2" ? "aspect-[1/1]"
-                  : selectedLayout === "3x2" ? "aspect-[2/3]"
-                    : selectedLayout === "4x2" ? "aspect-[1/2]"
-                      : selectedLayout === "2x1" ? "aspect-[1/2]"
-                        : "aspect-[1/3]"; // 3x1
+          </div>
+        ) : (
+          /* Fixed Height Scroll Container (430px) so layout & buttons stay locked in place */
+          <div
+            className="w-full overflow-y-auto pr-1.5 pb-2 h-[430px]"
+            style={{
+              scrollbarWidth: "thin",
+              scrollbarColor: "var(--color-ink) transparent",
+            }}
+          >
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-x-2.5 sm:gap-x-3 gap-y-3 pt-1">
+              {enabledTemplates.map((t) => {
+                const templateVal = getTemplateVal(t);
+                const active = variant === templateVal;
+                const isExclusive = exclusivePresetIds.includes(t.presetId);
 
-            // Thumb width — sized so ~4 frames fit in the right column
-            const thumbW =
-              selectedLayout === "3x2" || selectedLayout === "4x2" ? 70
-                : selectedLayout === "1x1" || selectedLayout === "2x2" ? 76
-                  : 58; // narrow for vertical strips
-
-            // Exclusive frames: pnc3, pnc4, pnc5, pnc6
-            const exclusivePresetIds = ["pnc3", "pnc4", "pnc5", "pnc6"];
-            const exclusiveTemplates = enabledTemplates.filter(t => exclusivePresetIds.includes(t.presetId));
-            const regularTemplates = enabledTemplates.filter(t => !exclusivePresetIds.includes(t.presetId));
-
-            const getTemplateVal = (t: Template) => t.isCustom ? t.id : t.id.replace(selectedLayout + "_", "");
-
-            // Regular frame thumb button
-            const renderThumb = (t: Template, customWidth?: string) => {
-              const templateVal = getTemplateVal(t);
-              const active = variant === templateVal;
-              return (
-                <button
-                  key={t.id}
-                  className={`flex flex-col items-center gap-1 transition-all shrink-0 ${active ? "scale-105 drop-shadow-md" : "opacity-60 hover:opacity-100 active:scale-95"
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setVariant(templateVal)}
+                    className={`group relative flex flex-col items-center transition-all cursor-pointer ${
+                      active ? "scale-[1.03] z-10" : "opacity-80 hover:opacity-100 hover:scale-[1.01]"
                     }`}
-                  style={{ width: customWidth || (thumbW + "px") }}
-                  onClick={() => setVariant(templateVal)}
-                >
-                  {t.img ? (
-                    <img
-                      src={t.img}
-                      className={`w-full h-auto object-contain bg-white border-[2px] ${active ? "border-[var(--color-ink)]" : "border-[var(--color-ink)]/40"
-                        }`}
-                      alt={t.name}
-                    />
-                  ) : (
-                    <div className={`w-full ${aspectClass} bg-white border-[2px] ${active ? "border-[var(--color-ink)]" : "border-[var(--color-ink)]/40"
-                      } flex flex-col justify-around p-0.5 gap-0.5`}>
-                      {Array.from({ length: LAYOUTS.find(l => l.id === selectedLayout)?.totalPhotos ?? 1 }).map((_, i) => (
-                        <div key={i} className="w-full flex-1 bg-[var(--color-ink)] opacity-10" />
-                      ))}
-                    </div>
-                  )}
-                  <span className="pixel text-[6px] text-center leading-tight w-full truncate">{t.name}</span>
-                </button>
-              );
-            };
-
-            if (exclusiveTemplates.length > 0) {
-              const safeIdx = Math.min(exSlideIdx, exclusiveTemplates.length - 1);
-              const currentEx = exclusiveTemplates[safeIdx];
-              const exVal = getTemplateVal(currentEx);
-
-              return (
-                <div className="w-full flex flex-row gap-3 items-stretch" style={{ minHeight: 0 }}>
-                  {/* LEFT: Exclusive compact panel */}
-                  <div
-                    className="flex flex-col items-center gap-1.5 border-4 border-dashed border-yellow-400 bg-yellow-50/20 p-2 rounded-lg shrink-0"
-                    style={{ width: "28%" }}
                   >
-                    <div className="pixel text-[7px] font-bold text-yellow-500 leading-none">👑 EKSKLUSIF</div>
-
-                    {/* Preview — compact, fixed height */}
-                    <button
-                      className={`w-full transition-all active:scale-95 ${variant === exVal ? "ring-2 ring-[var(--color-ink)]" : "opacity-85 hover:opacity-100"
-                        }`}
-                      onClick={() => setVariant(exVal)}
+                    {/* The Frame Thumbnail itself — directly adapts without extra outer box */}
+                    <div
+                      className="relative bg-white transition-all overflow-hidden flex items-center justify-center p-0.5"
+                      style={{
+                        border: active ? "3px solid var(--color-ink)" : "2px solid rgba(45, 35, 62, 0.4)",
+                        boxShadow: active
+                          ? "0 4px 0 0 var(--color-ink), 0 -4px 0 0 var(--color-ink), 4px 0 0 0 var(--color-ink), -4px 0 0 0 var(--color-ink), 6px 6px 0 0 var(--color-ink)"
+                          : "2px 2px 0 0 rgba(45, 35, 62, 0.15)",
+                        transform: active ? "translate(-2px, -2px)" : undefined,
+                      }}
                     >
-                      {currentEx.img ? (
+                      {/* Exclusive badge */}
+                      {isExclusive && (
+                        <div className="absolute top-1 right-1 z-20 bg-amber-400 text-[#2D233E] pixel text-[6px] font-bold px-1 py-0.5 rounded shadow-sm border border-[#2D233E]">
+                          👑 EKSKLUSIF
+                        </div>
+                      )}
+
+                      {/* Active check badge */}
+                      {active && (
+                        <div className="absolute top-1 left-1 z-20 bg-[var(--color-butter)] text-[var(--color-ink)] pixel text-[6px] font-bold px-1 py-0.5 rounded shadow border border-[var(--color-ink)]">
+                          ✓ DIPILIH
+                        </div>
+                      )}
+
+                      {t.img ? (
                         <img
-                          src={currentEx.img}
-                          className="w-full h-auto object-contain bg-white border-[2px] border-[var(--color-ink)]"
-                          alt={currentEx.name}
+                          src={t.img}
+                          className="h-[155px] sm:h-[165px] w-auto max-w-full object-contain pointer-events-none select-none block"
+                          alt={t.name}
+                          loading="lazy"
                         />
                       ) : (
-                        <div className={`w-full ${aspectClass} bg-white border-[2px] border-[var(--color-ink)] flex flex-col justify-around p-1 gap-0.5`}>
-                          {Array.from({ length: LAYOUTS.find(l => l.id === selectedLayout)?.totalPhotos ?? 1 }).map((_, i) => (
-                            <div key={i} className="w-full flex-1 bg-[var(--color-ink)] opacity-10" />
+                        <div className="w-[105px] h-[155px] sm:h-[165px] bg-white flex flex-col justify-around p-1 gap-0.5">
+                          {Array.from({ length: LAYOUTS.find((l) => l.id === selectedLayout)?.totalPhotos ?? 1 }).map((_, i) => (
+                            <div key={i} className="w-full flex-1 bg-[var(--color-ink)] opacity-10 rounded-sm" />
                           ))}
                         </div>
                       )}
-                    </button>
-
-                    <span className="pixel text-[7px] font-bold text-yellow-600 text-center leading-tight truncate w-full">{currentEx.name}</span>
-
-                    {/* Dots only (no prev/next buttons to save space — swipe with dots) */}
-                    {exclusiveTemplates.length > 1 && (
-                      <div className="flex items-center gap-1.5">
-                        {exclusiveTemplates.map((_, i) => (
-                          <button
-                            key={i}
-                            onClick={() => setExSlideIdx(i)}
-                            className={`rounded-full transition-all ${i === safeIdx ? "w-3 h-3 bg-yellow-500 scale-110" : "w-2 h-2 bg-yellow-300"
-                              }`}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* RIGHT: Regular frames — touch scrollable, shows 4+ at once */}
-                  <div className="flex-1 min-w-0 flex flex-col gap-1">
-                    <div className="pixel text-[7px] font-bold opacity-40 text-center">▫ FRAME REGULER</div>
-                    {regularTemplates.length > 0 ? (
-                      <>
-                        <div
-                          ref={regularScrollRef}
-                          onScroll={handleRegularScroll}
-                          className="w-full overflow-x-auto flex flex-row flex-nowrap gap-2 items-end pb-1 no-scrollbar"
-                          style={{
-                            scrollbarWidth: "none",
-                            WebkitOverflowScrolling: "touch",
-                            touchAction: "pan-x",
-                            scrollSnapType: "x mandatory",
-                          }}
-                        >
-                          {regularTemplates.map(t => (
-                            <div key={t.id} style={{ scrollSnapAlign: "start", width: "calc((100% - 24px) / 4)", flexShrink: 0 }}>
-                              {renderThumb(t, "100%")}
-                            </div>
-                          ))}
-                        </div>
-                        {/* Dots — only show if more than 4 frames */}
-                        {regularTemplates.length > 4 && (
-                          <div className="flex justify-center gap-1">
-                            {regularTemplates.map((_, idx) => (
-                              <div key={idx} className={`rounded-full transition-all ${idx === regularScrollIndex ? "w-2 h-2 bg-[var(--color-ink)]" : "w-1.5 h-1.5 bg-[var(--color-ink)]/20"
-                                }`} />
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="flex-1 flex items-center justify-center opacity-30 pixel text-[7px]">—</div>
-                    )}
-                  </div>
-                </div>
-              );
-            }
-
-            // Fallback: no exclusive frames → full-width touch scroll
-            return (
-              <>
-                <div
-                  ref={regularScrollRef}
-                  onScroll={handleRegularScroll}
-                  className="w-full overflow-x-auto flex flex-row flex-nowrap gap-2 items-end pb-1 no-scrollbar"
-                  style={{
-                    scrollbarWidth: "none",
-                    WebkitOverflowScrolling: "touch",
-                    touchAction: "pan-x",
-                    scrollSnapType: "x mandatory",
-                  }}
-                >
-                  {enabledTemplates.map(t => (
-                    <div key={t.id} style={{ scrollSnapAlign: "start", width: "calc((100% - 24px) / 4)", flexShrink: 0 }}>
-                      {renderThumb(t, "100%")}
                     </div>
-                  ))}
-                </div>
-                {enabledTemplates.length > 4 && (
-                  <div className="flex justify-center gap-1 mt-1">
-                    {enabledTemplates.map((_, idx) => (
-                      <div key={idx} className={`rounded-full transition-all ${idx === regularScrollIndex ? "w-2 h-2 bg-[var(--color-ink)]" : "w-1.5 h-1.5 bg-[var(--color-ink)]/20"
-                        }`} />
-                    ))}
-                  </div>
-                )}
-              </>
-            );
-          })()}
-        </div>
+
+                    {/* Frame Name directly below the frame */}
+                    <span
+                      className={`pixel text-[7px] sm:text-[8px] font-bold text-center leading-tight truncate max-w-full mt-1.5 px-0.5 ${
+                        active ? "text-[var(--color-ink)] font-black" : isExclusive ? "text-amber-800" : "text-[var(--color-ink)]/75"
+                      }`}
+                      title={t.name}
+                    >
+                      {t.name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Bottom Buttons */}
-        <div className="flex gap-4 w-full">
+        <div className="flex gap-4 w-full pt-1">
           <button
-            className="pixel-btn-powder flex-1"
+            className="pixel-btn-powder flex-1 py-2.5 sm:py-3 text-xs sm:text-sm cursor-pointer"
             onClick={onBack}
           >
             ◀ KEMBALI
           </button>
           <button
-            className="pixel-btn-sage flex-1"
+            className="pixel-btn-sage flex-1 py-2.5 sm:py-3 text-xs sm:text-sm cursor-pointer"
             onClick={onNext}
             disabled={enabledTemplates.length === 0}
           >
@@ -2060,21 +1968,29 @@ function ShootScreen({
 async function preparePhotosWithEffect(
   rawPhotos: string[],
   filterCss?: string,
-  aiShaderType?: string
+  activeAi?: AiEffect | null,
+  providerSettings?: AiProviderSettings,
+  onProgress?: (current: number, total: number) => void
 ): Promise<string[]> {
-  if ((!filterCss || filterCss === "none") && !aiShaderType) {
+  if ((!filterCss || filterCss === "none") && !activeAi) {
     return rawPhotos;
   }
-  return Promise.all(
-    rawPhotos.map((dataUrl) => {
-      return new Promise<string>((resolve) => {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.onload = () => {
+
+  const results: string[] = [];
+  for (let i = 0; i < rawPhotos.length; i++) {
+    const dataUrl = rawPhotos[i];
+    if (onProgress) {
+      onProgress(i + 1, rawPhotos.length);
+    }
+    const processed = await new Promise<string>((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = async () => {
+        try {
           const canvas = document.createElement("canvas");
           canvas.width = img.naturalWidth || img.width;
           canvas.height = img.naturalHeight || img.height;
-          const ctx = canvas.getContext("2d");
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
           if (!ctx) {
             resolve(dataUrl);
             return;
@@ -2083,16 +1999,28 @@ async function preparePhotosWithEffect(
             ctx.filter = filterCss;
           }
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          if (aiShaderType) {
-            applyAiShaderToContext(ctx, aiShaderType as any, canvas.width, canvas.height);
+
+          if (activeAi) {
+            const aiDataUrl = await applyAiStylization(
+              canvas,
+              activeAi,
+              providerSettings || DEFAULT_AI_PROVIDER_SETTINGS
+            );
+            resolve(aiDataUrl);
+          } else {
+            resolve(canvas.toDataURL("image/jpeg", 0.95));
           }
-          resolve(canvas.toDataURL("image/jpeg", 0.95));
-        };
-        img.onerror = () => resolve(dataUrl);
-        img.src = dataUrl;
-      });
-    })
-  );
+        } catch (err) {
+          console.warn("Failed processing photo effect:", err);
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+    results.push(processed);
+  }
+  return results;
 }
 
 function ReviewScreen({
@@ -2133,23 +2061,8 @@ function ReviewScreen({
   const [retakeFlashing, setRetakeFlashing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Local effect selections
-  const [selectedFilterLocal, setSelectedFilterLocal] = useState<string>(selectedFilter || "normal");
-  const [selectedAiLocal, setSelectedAiLocal] = useState<string | null>(selectedAiEffect || null);
-  const [filterCategory, setFilterCategory] = useState<"all" | "ai" | "color">("all");
-  const carouselRef = useRef<HTMLDivElement | null>(null);
-
   const retakeVideoRef = useRef<HTMLVideoElement | null>(null);
   const retakeStreamRef = useRef<MediaStream | null>(null);
-
-  const activeFilters = filters && filters.length > 0 ? filters : PHOTO_FILTERS;
-  const currentFilterObj = activeFilters.find((f) => f.id === selectedFilterLocal) || activeFilters[0];
-  const currentAiObj = selectedAiLocal ? aiEffects.find((a) => a.id === selectedAiLocal) : null;
-
-  // Compute live CSS preview string
-  const previewFilterCss = selectedAiLocal
-    ? getAiPreviewCss(currentAiObj?.shaderType || "3d_movie")
-    : (currentFilterObj?.css || "none");
 
   // Template and hole detection for right-side frame preview
   const activeTemplate =
@@ -2257,13 +2170,6 @@ function ReviewScreen({
     };
   }, [overlaySrc, layout, variantConfig, activeTemplate]);
 
-  // Carousel scroll helper
-  const scrollCarousel = (direction: "left" | "right") => {
-    if (carouselRef.current) {
-      const offset = direction === "left" ? -320 : 320;
-      carouselRef.current.scrollBy({ left: offset, behavior: "smooth" });
-    }
-  };
 
   // Open camera when retakeIdx is set
   useEffect(() => {
@@ -2359,29 +2265,18 @@ function ReviewScreen({
     setIsProcessing(true);
 
     try {
-      // 1. Process photos with selected filter or AI effect shader
-      const activeAi = selectedAiLocal ? aiEffects.find((a) => a.id === selectedAiLocal) : null;
-      const activeFilt = activeFilters.find((f) => f.id === selectedFilterLocal);
-
-      const processedPhotos = await preparePhotosWithEffect(
-        photos,
-        selectedAiLocal ? undefined : (activeFilt?.css !== "none" ? activeFilt?.css : undefined),
-        activeAi ? activeAi.shaderType : undefined
-      );
-
       const customImg = activeTemplate?.img;
       const presetId = activeTemplate?.presetId || variant;
 
       let stripResult: string;
       if (customImg) {
-        stripResult = await composeTemplateFrame(processedPhotos, variant, customImg, presetId, layout, activeTemplate?.photoBoxes);
+        stripResult = await composeTemplateFrame(photos, variant, customImg, presetId, layout, activeTemplate?.photoBoxes);
       } else if (layout === "2x1" && variant !== "default") {
-        stripResult = await compose2x1Variant(processedPhotos, variant, customImg, presetId);
+        stripResult = await compose2x1Variant(photos, variant, customImg, presetId);
       } else {
-        stripResult = await composeStrip(processedPhotos, "template", layout);
+        stripResult = await composeStrip(photos, "template", layout);
       }
 
-      setPhotos(processedPhotos);
       await onFinish(stripResult);
     } catch (e: any) {
       console.error("Failed composing strip with custom template, using safe fallback:", e);
@@ -2397,62 +2292,6 @@ function ReviewScreen({
     }
   };
 
-  // Build items list for carousel
-  const carouselItems: Array<{
-    type: "normal" | "ai" | "filter";
-    id: string;
-    name: string;
-    emoji?: string;
-    css?: string;
-    shaderType?: string;
-    categoryLabel?: string;
-  }> = [];
-
-  // Normal always first
-  if (filterCategory === "all" || filterCategory === "color") {
-    carouselItems.push({
-      type: "normal",
-      id: "normal",
-      name: "Normal",
-      emoji: "📷",
-      css: "none",
-    });
-  }
-
-  // AI Effects
-  if (filterCategory === "all" || filterCategory === "ai") {
-    aiEffects
-      .filter((e) => e.enabled !== false)
-      .forEach((e) => {
-        carouselItems.push({
-          type: "ai",
-          id: e.id,
-          name: e.name,
-          emoji: e.emoji,
-          shaderType: e.shaderType,
-          categoryLabel: e.categoryLabel,
-        });
-      });
-  }
-
-  // Color Filters (excluding normal)
-  if (filterCategory === "all" || filterCategory === "color") {
-    activeFilters
-      .filter((f) => f.enabled !== false && f.id !== "normal")
-      .forEach((f) => {
-        carouselItems.push({
-          type: "filter",
-          id: f.id,
-          name: f.name,
-          css: f.css,
-        });
-      });
-  }
-
-  const activeLabel = selectedAiLocal
-    ? `✨ Efek AI: ${currentAiObj?.name || "Dreambooth"}`
-    : `🎨 Filter: ${currentFilterObj?.name || "Normal"}`;
-
   return (
     <div className="w-full max-w-6xl mx-auto flex flex-col items-center gap-4 px-2 sm:px-4 py-2">
       {/* Title Header */}
@@ -2461,7 +2300,7 @@ function ReviewScreen({
           PRATINJAU HASIL FOTO 📸
         </h2>
         <p className="text-xs sm:text-sm text-slate-500 font-sans">
-          Lihat foto di bingkai, pilih gaya filter & efek di bawah, atau klik foto di kiri jika ingin foto ulang!
+          Lihat foto di bingkai, klik "Foto Ulang" jika ada pose yang ingin diperbaiki, atau klik Selesai & Cetak!
         </p>
       </div>
 
@@ -2543,18 +2382,6 @@ function ReviewScreen({
                 Tampilan langsung saat foto dimasukkan ke dalam template
               </p>
             </div>
-
-            {/* Active Style Pill */}
-            <div
-              className={`px-2.5 py-1 rounded-full text-[10px] font-bold pixel flex items-center gap-1 shadow-sm ${
-                selectedAiLocal
-                  ? "bg-gradient-to-r from-indigo-500 to-pink-500 text-white"
-                  : "bg-slate-100 text-slate-800 border border-slate-200"
-              }`}
-            >
-              <span>{selectedAiLocal ? "✨" : "🎨"}</span>
-              <span className="truncate max-w-[140px]">{activeLabel}</span>
-            </div>
           </div>
 
           {/* Visual Composite Frame Preview */}
@@ -2577,7 +2404,7 @@ function ReviewScreen({
                 />
               ) : null}
 
-              {/* Photo slots with Live CSS Filter/AI preview */}
+              {/* Photo slots */}
               {detectedHoles.map((h, i) => {
                 const photoIndex = layout === "4x2" ? Math.floor(i / 2) : i;
                 const photoSrc = photos[photoIndex];
@@ -2597,10 +2424,7 @@ function ReviewScreen({
                     {photoSrc ? (
                       <img
                         src={photoSrc}
-                        className="w-full h-full object-cover transition-all duration-300"
-                        style={{
-                          filter: previewFilterCss,
-                        }}
+                        className="w-full h-full object-cover"
                         alt={`Pose ${photoIndex + 1}`}
                       />
                     ) : (
@@ -2620,200 +2444,24 @@ function ReviewScreen({
               )}
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* ── BOTTOM SECTION: Pilihan filter sama efek (Lingkaran kecil, ~10 terlihat, sisanya bergeser) ── */}
-      <div className="w-full bg-white border-4 border-[#3A2A40] rounded-2xl p-3.5 shadow-[5px_5px_0_0_rgba(58,42,64,0.18)] flex flex-col gap-2.5">
-        {/* Carousel Header & Categories */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2 px-1">
-          <div className="flex items-center gap-2">
-            <span className="pixel text-xs text-[#3A2A40] font-bold">PILIH FILTER & EFEK:</span>
-            <span className="text-[11px] font-medium text-slate-500 font-sans hidden sm:inline">
-              (Klik lingkaran untuk mengganti gaya foto)
-            </span>
+          {/* Selesai & Cetak Button in Right Column */}
+          <div className="w-full flex justify-end pt-2 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={handleFinish}
+              disabled={isProcessing}
+              className="pixel-btn flex items-center gap-2 cursor-pointer hover:scale-105 active:scale-95 transition-transform shadow-[4px_4px_0_0_rgba(58,42,64,0.3)] w-full sm:w-auto justify-center"
+              style={{
+                fontSize: "1rem",
+                padding: "0.85rem 2.8rem",
+                background: "var(--color-sage)",
+                color: "#1f2937",
+              }}
+            >
+              {isProcessing ? "MEMPROSES BINGKAI... ⏳" : "SELESAI & CETAK ➔"}
+            </button>
           </div>
-
-          <div className="flex items-center gap-2">
-            {/* Category Segmented Pills */}
-            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[10px] font-sans font-bold">
-              <button
-                type="button"
-                onClick={() => setFilterCategory("all")}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  filterCategory === "all" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
-                }`}
-              >
-                Semua ({1 + aiEffects.length + (activeFilters.length - 1)})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterCategory("ai")}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
-                  filterCategory === "ai" ? "bg-purple-600 text-white shadow-sm" : "text-purple-700 hover:text-purple-900"
-                }`}
-              >
-                <span>✨</span> Efek AI ({aiEffects.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterCategory("color")}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  filterCategory === "color" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
-                }`}
-              >
-                🎨 Filter Warna ({activeFilters.length})
-              </button>
-            </div>
-
-            {/* Carousel Navigation Arrow Buttons */}
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => scrollCarousel("left")}
-                className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-bold flex items-center justify-center cursor-pointer shadow-sm text-sm"
-                title="Geser ke kiri"
-              >
-                ‹
-              </button>
-              <button
-                type="button"
-                onClick={() => scrollCarousel("right")}
-                className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-bold flex items-center justify-center cursor-pointer shadow-sm text-sm"
-                title="Geser ke kanan"
-              >
-                ›
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* ── Circular Carousel: 10 circles visible on desktop, rest scroll horizontally ── */}
-        <div
-          ref={carouselRef}
-          className="flex items-center gap-3 overflow-x-auto py-2 px-1 scroll-smooth select-none scrollbar-thin"
-          style={{ scrollbarWidth: "thin" }}
-        >
-          {carouselItems.map((item) => {
-            const isSelected =
-              item.type === "normal"
-                ? selectedFilterLocal === "normal" && !selectedAiLocal
-                : item.type === "ai"
-                ? selectedAiLocal === item.id
-                : selectedFilterLocal === item.id && !selectedAiLocal;
-
-            return (
-              <div
-                key={item.type + "_" + item.id}
-                onClick={() => {
-                  if (item.type === "normal") {
-                    setSelectedFilterLocal("normal");
-                    setSelectedAiLocal(null);
-                    setSelectedFilter?.("normal");
-                    setSelectedAiEffect?.(null);
-                  } else if (item.type === "ai") {
-                    setSelectedAiLocal(item.id);
-                    setSelectedFilterLocal("normal");
-                    setSelectedAiEffect?.(item.id);
-                    setSelectedFilter?.("normal");
-                  } else {
-                    setSelectedFilterLocal(item.id);
-                    setSelectedAiLocal(null);
-                    setSelectedFilter?.(item.id);
-                    setSelectedAiEffect?.(null);
-                  }
-                }}
-                className="flex flex-col items-center shrink-0 cursor-pointer group"
-                style={{ width: "66px" }}
-              >
-                {/* The Circle */}
-                <div
-                  className={`w-14 h-14 sm:w-15 sm:h-15 rounded-full relative flex items-center justify-center transition-all duration-150 ${
-                    isSelected
-                      ? item.type === "ai"
-                        ? "ring-4 ring-purple-500 ring-offset-2 scale-105 shadow-lg"
-                        : "ring-4 ring-indigo-600 ring-offset-2 scale-105 shadow-lg"
-                      : "border-2 border-slate-300 hover:border-slate-400 group-hover:scale-105"
-                  }`}
-                >
-                  {/* Normal Circle Style */}
-                  {item.type === "normal" && (
-                    <div className="w-full h-full rounded-full bg-slate-100 flex items-center justify-center text-xl text-slate-700">
-                      📷
-                    </div>
-                  )}
-
-                  {/* AI Effect Circle Style */}
-                  {item.type === "ai" && (
-                    <div className="w-full h-full rounded-full bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex flex-col items-center justify-center text-xl text-white shadow-inner relative overflow-hidden">
-                      <span className="scale-110">{item.emoji || "✨"}</span>
-                      <span className="absolute top-0.5 right-1 text-[6.5px] font-black bg-amber-400 text-black px-1 rounded-full leading-tight shadow-xs">
-                        AI
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Filter Swatch Circle Style */}
-                  {item.type === "filter" && (
-                    <div className="w-full h-full rounded-full overflow-hidden relative flex items-center justify-center bg-slate-800">
-                      <div
-                        className="w-full h-full"
-                        style={{
-                          background: "linear-gradient(135deg, #f59e0b, #ef4444, #8b5cf6)",
-                          filter: item.css || "none",
-                        }}
-                      />
-                      <span className="absolute text-white text-[11px] font-bold drop-shadow">
-                        🎨
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Selected Active Checkmark */}
-                  {isSelected && (
-                    <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-bold shadow-md">
-                      ✓
-                    </div>
-                  )}
-                </div>
-
-                {/* Circle Label */}
-                <span
-                  className={`text-[10px] truncate max-w-[64px] text-center block mt-1 tracking-tight font-sans transition-colors ${
-                    isSelected ? "font-bold text-indigo-600" : "text-slate-600 group-hover:text-slate-900"
-                  }`}
-                  title={item.name}
-                >
-                  {item.name}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* ── Footer Row: Info + SELESAI & CETAK Button ── */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 px-1">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 font-sans">Gaya Terpilih:</span>
-            <span className="text-xs font-bold font-sans px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-800 border border-slate-200">
-              {activeLabel}
-            </span>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleFinish}
-            disabled={isProcessing}
-            className="pixel-btn flex items-center gap-2 cursor-pointer hover:scale-105 active:scale-95 transition-transform shadow-[4px_4px_0_0_rgba(58,42,64,0.3)] ml-auto"
-            style={{
-              fontSize: "0.95rem",
-              padding: "0.75rem 2.2rem",
-              background: "var(--color-sage)",
-              color: "#1f2937",
-            }}
-          >
-            {isProcessing ? "MEMPROSES BINGKAI... ⏳" : "SELESAI & CETAK ➔"}
-          </button>
         </div>
       </div>
 
@@ -2886,6 +2534,7 @@ function ReviewScreen({
           </div>
         </div>
       )}
+
     </div>
   );
 }
@@ -3171,6 +2820,8 @@ function ResultScreen({
             live_videos: uploadedVideoUrls.filter(Boolean),
             raw_photos: uploadedRawUrls.filter(Boolean),
             total_photos: photos.length,
+            print_status: "pending",
+            print_copies: printCopies || 1,
           });
 
           dbSaved = true;
@@ -3198,6 +2849,8 @@ function ResultScreen({
           live_videos: liveVideos || [],
           raw_photos: photos,
           total_photos: photos.length,
+          print_status: "pending",
+          print_copies: printCopies || 1,
         });
         if (active) setUploadStatus("demo");
       }
@@ -3205,7 +2858,7 @@ function ResultScreen({
 
     uploadAndPersist();
     return () => { active = false; };
-  }, [strip, photos, layout, variant, sessionCode]);
+  }, [strip, photos, layout, variant, sessionCode, printCopies]);
 
   const download = () => {
     const a = document.createElement("a");
@@ -3215,6 +2868,15 @@ function ResultScreen({
 
   // ── Print with correct physical dimensions ────────────────────────
   const printPhoto = () => {
+    try {
+      const sDB = new SessionDB();
+      sDB.updateSession(sessionCode, {
+        print_status: "printed",
+        printed_at: new Date().toISOString(),
+        print_copies: printCopies,
+      });
+    } catch {}
+
     const { sheets, w, h } = printInfo;
     const sheetWidth = (layout === "3x1" || layout === "2x1") ? w * 2 : w;
     const sheetHeight = h;

@@ -24,6 +24,7 @@ import {
   generate12sGifFromVideo,
   convertBlobToMp4,
 } from "@/lib/frameLive";
+import { generateGifFromPhotos } from "@/lib/gif";
 
 interface CustomerDownloadPortalProps {
   sessionCode: string;

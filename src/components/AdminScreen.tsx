@@ -42,7 +42,12 @@ import {
   Clock,
   Pencil,
   Copy,
+  Printer,
+  Volume2,
+  VolumeX,
+  Download,
 } from "lucide-react";
+import { printPhotoStrip, PRINT_SIZES } from "../lib/printHelper";
 import {
   CameraFilter,
   FilterSliderSettings,
@@ -63,6 +68,7 @@ import {
   loadAiProviderSettings,
   saveAiProviderSettings,
   applyAiStylization,
+  testAiProviderConnection,
 } from "../lib/aiEffects";
 
 export interface Template {
@@ -343,9 +349,18 @@ export function AdminScreen({
   onLaunchBooth,
   onLogout,
 }: AdminScreenProps) {
-  const [activeNav, setActiveNav] = useState<"dashboard" | "frames" | "filters" | "ai" | "gallery" | "devices" | "settings" | "database">("dashboard");
+  const [activeNav, setActiveNav] = useState<"dashboard" | "frames" | "filters" | "ai" | "gallery" | "print" | "devices" | "settings" | "database">("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+
+  // ── Print Queue & History State ──
+  const [printTab, setPrintTab] = useState<"pending" | "history">("pending");
+  const [printSearchQuery, setPrintSearchQuery] = useState("");
+  const [printingSessionCode, setPrintingSessionCode] = useState<string | null>(null);
+  const [selectedPreviewStrip, setSelectedPreviewStrip] = useState<PhotoboothSession | null>(null);
+  const [autoRefreshPrint, setAutoRefreshPrint] = useState(true);
+  const [soundAlertEnabled, setSoundAlertEnabled] = useState(true);
+  const [editCopiesMap, setEditCopiesMap] = useState<Record<string, number>>({});
 
   // Frames filter & upload
   const [activeLayoutFilter, setActiveLayoutFilter] = useState<string>("all");
@@ -463,7 +478,10 @@ export function AdminScreen({
   const [providerModeInput, setProviderModeInput] = useState<AiProviderSettings["mode"]>(aiProviderSettings.mode);
   const [apiKeyInput, setApiKeyInput] = useState(aiProviderSettings.apiKey || "");
   const [apiEndpointInput, setApiEndpointInput] = useState(aiProviderSettings.apiEndpoint || "");
-  const [strengthInput, setStrengthInput] = useState<number>(aiProviderSettings.strength || 0.85);
+  const [modelNameInput, setModelNameInput] = useState(aiProviderSettings.modelName || "fal-ai/fast-sdxl/image-to-image");
+  const [strengthInput, setStrengthInput] = useState<number>(aiProviderSettings.strength || 0.80);
+  const [isTestingProvider, setIsTestingProvider] = useState(false);
+  const [providerTestMsg, setProviderTestMsg] = useState<{ success: boolean; text: string } | null>(null);
 
   // AI Interactive Testing Modal
   const [showAiTestModal, setShowAiTestModal] = useState(false);
@@ -796,6 +814,7 @@ export function AdminScreen({
       mode: providerModeInput,
       apiKey: apiKeyInput.trim(),
       apiEndpoint: apiEndpointInput.trim(),
+      modelName: modelNameInput.trim(),
       strength: strengthInput,
     };
     setAiProviderSettings(newSettings);
@@ -803,6 +822,25 @@ export function AdminScreen({
     setShowAiProviderModal(false);
     setAiFeedbackMsg("⚙️ Pengaturan Provider AI berhasil disimpan!");
     setTimeout(() => setAiFeedbackMsg(""), 3500);
+  };
+
+  const handleTestAiProvider = async () => {
+    setIsTestingProvider(true);
+    setProviderTestMsg(null);
+    try {
+      const res = await testAiProviderConnection({
+        mode: providerModeInput,
+        apiKey: apiKeyInput.trim(),
+        apiEndpoint: apiEndpointInput.trim(),
+        modelName: modelNameInput.trim(),
+        strength: strengthInput,
+      });
+      setProviderTestMsg({ success: res.success, text: res.message });
+    } catch (err: any) {
+      setProviderTestMsg({ success: false, text: err.message || "Gagal menguji koneksi" });
+    } finally {
+      setIsTestingProvider(false);
+    }
   };
 
   const handleOpenTestAiModal = (eff: AiEffect) => {
@@ -931,6 +969,98 @@ export function AdminScreen({
     } finally {
       setLoadingSessions(false);
     }
+  };
+
+  const playPrintChime = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.38);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.4);
+    } catch {}
+  };
+
+  // Auto-refresh sessions every 3.5 seconds so print queue updates in real-time
+  useEffect(() => {
+    if (!autoRefreshPrint) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const data = await sessionDB.getRecentSessions(50);
+        setRecentSessions((prev) => {
+          const prevPending = prev.filter((s) => s.print_status !== "printed").length;
+          const newPending = data.filter((s) => s.print_status !== "printed").length;
+          if (newPending > prevPending && soundAlertEnabled) {
+            playPrintChime();
+          }
+          return data;
+        });
+      } catch {}
+    }, 3500);
+
+    return () => clearInterval(interval);
+  }, [autoRefreshPrint, soundAlertEnabled]);
+
+  const handlePrintSession = async (sess: PhotoboothSession, overrideCopies?: number) => {
+    const numCopies = overrideCopies !== undefined ? overrideCopies : (editCopiesMap[sess.session_code] || sess.print_copies || 1);
+    setPrintingSessionCode(sess.session_code);
+    try {
+      await printPhotoStrip(sess.strip_url, sess.layout, numCopies);
+      await sessionDB.updateSession(sess.session_code, {
+        print_status: "printed",
+        printed_at: new Date().toISOString(),
+        print_copies: numCopies,
+      });
+      const fresh = await sessionDB.getRecentSessions(50);
+      setRecentSessions(fresh);
+      setActionStatus(`✅ Foto #${sess.session_code} berhasil dicetak (${numCopies} rangkap).`);
+      setTimeout(() => setActionStatus(""), 4000);
+    } catch (err) {
+      console.error("Gagal mencetak:", err);
+      alert("Gagal memproses cetak. Pastikan printer terhubung.");
+    } finally {
+      setPrintingSessionCode(null);
+    }
+  };
+
+  const handleMarkAsPrinted = async (sess: PhotoboothSession) => {
+    await sessionDB.updateSession(sess.session_code, {
+      print_status: "printed",
+      printed_at: new Date().toISOString(),
+    });
+    const fresh = await sessionDB.getRecentSessions(50);
+    setRecentSessions(fresh);
+    setActionStatus(`✅ Sesi #${sess.session_code} ditandai selesai dicetak.`);
+    setTimeout(() => setActionStatus(""), 3500);
+  };
+
+  const handleMoveToPending = async (sess: PhotoboothSession) => {
+    await sessionDB.updateSession(sess.session_code, {
+      print_status: "pending",
+    });
+    const fresh = await sessionDB.getRecentSessions(50);
+    setRecentSessions(fresh);
+    setActionStatus(`↩️ Sesi #${sess.session_code} dikembalikan ke antrian cetak.`);
+    setTimeout(() => setActionStatus(""), 3500);
+  };
+
+  const handleDeleteSessionItem = async (sess: PhotoboothSession) => {
+    if (!window.confirm(`Hapus sesi #${sess.session_code} dari sistem?`)) return;
+    await sessionDB.deleteSession(sess.session_code);
+    const fresh = await sessionDB.getRecentSessions(50);
+    setRecentSessions(fresh);
+    setActionStatus(`🗑️ Sesi #${sess.session_code} berhasil dihapus.`);
+    setTimeout(() => setActionStatus(""), 3500);
   };
 
   // Camera preview in Devices tab
@@ -1443,12 +1573,12 @@ export function AdminScreen({
           const holes = detectHolesFromCanvas(canvas);
           applyHolesToLayout(holes);
           if (holes.length > 0) {
-            const boxes: PhotoBox[] = holes.map((h, i) => ({
+            const boxes: PhotoBox[] = holes.map((hole, i) => ({
               id: `box_${i + 1}`,
-              x: Math.round((h.x / w) * 1000) / 10,
-              y: Math.round((h.y / h) * 1000) / 10,
-              w: Math.round((h.w / w) * 1000) / 10,
-              h: Math.round((h.h / h) * 1000) / 10,
+              x: Math.round((hole.x / w) * 1000) / 10,
+              y: Math.round((hole.y / h) * 1000) / 10,
+              w: Math.round((hole.w / w) * 1000) / 10,
+              h: Math.round((hole.h / h) * 1000) / 10,
             }));
             setPhotoBoxes(boxes);
             setSelectedBoxId(boxes[0]?.id || null);
@@ -2110,6 +2240,32 @@ export function AdminScreen({
                 </div>
               )}
             </button>
+
+            <button
+              onClick={() => setActiveNav("print")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                activeNav === "print"
+                  ? "bg-amber-50 text-amber-800 font-bold shadow-xs border border-amber-200"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              } ${sidebarCollapsed ? "justify-center" : ""}`}
+              title="Antrian Cetak & Riwayat Print Foto"
+            >
+              <Printer className="w-4 h-4 shrink-0 text-amber-500" />
+              {!sidebarCollapsed && (
+                <div className="flex items-center justify-between w-full">
+                  <span>Antrian Cetak</span>
+                  {recentSessions.filter((s) => s.print_status !== "printed").length > 0 ? (
+                    <span className="text-[10px] bg-amber-500 text-white px-2 py-0.5 rounded-full font-bold animate-pulse shadow-xs">
+                      {recentSessions.filter((s) => s.print_status !== "printed").length} Antri
+                    </span>
+                  ) : (
+                    <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-medium">
+                      {recentSessions.filter((s) => s.print_status === "printed").length}
+                    </span>
+                  )}
+                </div>
+              )}
+            </button>
           </div>
 
           {/* Group 2: PENGELOLAAN BOOTH */}
@@ -2139,45 +2295,6 @@ export function AdminScreen({
               )}
             </button>
 
-            <button
-              onClick={() => setActiveNav("filters")}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeNav === "filters"
-                  ? "bg-blue-50 text-blue-600 font-bold shadow-xs"
-                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              } ${sidebarCollapsed ? "justify-center" : ""}`}
-              title="Manajemen Filter Kamera"
-            >
-              <Sparkles className="w-4 h-4 shrink-0 text-pink-500" />
-              {!sidebarCollapsed && (
-                <div className="flex items-center justify-between w-full">
-                  <span>Filter Kamera</span>
-                  <span className="text-[10px] bg-pink-100 text-pink-700 px-1.5 py-0.5 rounded-full font-bold">
-                    {filters.filter((f) => f.enabled !== false).length} Aktif
-                  </span>
-                </div>
-              )}
-            </button>
-
-            <button
-              onClick={() => setActiveNav("ai")}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                activeNav === "ai"
-                  ? "bg-blue-50 text-blue-600 font-bold shadow-xs"
-                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              } ${sidebarCollapsed ? "justify-center" : ""}`}
-              title="Koleksi Efek AI (Dreambooth)"
-            >
-              <Wand2 className="w-4 h-4 shrink-0 text-violet-600" />
-              {!sidebarCollapsed && (
-                <div className="flex items-center justify-between w-full">
-                  <span>Efek AI</span>
-                  <span className="text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-bold">
-                    {aiEffects.filter((e) => e.enabled).length} Aktif
-                  </span>
-                </div>
-              )}
-            </button>
 
             <button
               onClick={() => setActiveNav("devices")}
@@ -2358,40 +2475,51 @@ export function AdminScreen({
                 </div>
 
                 <div
-                  onClick={() => setActiveNav("filters")}
-                  className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between cursor-pointer hover:border-pink-300 hover:shadow-sm transition-all group"
-                  title="Klik untuk kelola filter kamera"
+                  onClick={() => {
+                    setActiveNav("print");
+                    setPrintTab("pending");
+                  }}
+                  className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between cursor-pointer hover:border-amber-400 hover:shadow-sm transition-all group"
+                  title="Klik untuk lihat antrian cetak foto"
                 >
                   <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider group-hover:text-pink-600 transition-colors">
-                      Filter Kamera
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider group-hover:text-amber-600 transition-colors">
+                      Antrian Cetak
                     </p>
-                    <h3 className="text-2xl font-black text-slate-900 mt-1">
-                      {filters.filter((f) => f.enabled !== false).length}
+                    <h3 className="text-2xl font-black text-slate-900 mt-1 flex items-center gap-2">
+                      <span>{recentSessions.filter((s) => s.print_status !== "printed").length}</span>
+                      {recentSessions.filter((s) => s.print_status !== "printed").length > 0 && (
+                        <span className="text-[10px] bg-amber-500 text-white font-bold px-2 py-0.5 rounded-full animate-pulse">
+                          Antri
+                        </span>
+                      )}
                     </h3>
-                    <span className="text-[11px] text-pink-600 font-medium">Dari {filters.length} pilihan efek</span>
+                    <span className="text-[11px] text-amber-700 font-medium">Menunggu dicetak</span>
                   </div>
-                  <div className="w-12 h-12 rounded-2xl bg-pink-50 text-pink-600 flex items-center justify-center group-hover:scale-105 transition-transform">
-                    <Sparkles className="w-6 h-6" />
+                  <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center group-hover:scale-105 transition-transform">
+                    <Printer className="w-6 h-6" />
                   </div>
                 </div>
 
                 <div
-                  onClick={() => setActiveNav("ai")}
-                  className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between cursor-pointer hover:border-violet-300 hover:shadow-sm transition-all group"
-                  title="Klik untuk kelola efek AI (Dreambooth)"
+                  onClick={() => {
+                    setActiveNav("print");
+                    setPrintTab("history");
+                  }}
+                  className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between cursor-pointer hover:border-blue-400 hover:shadow-sm transition-all group"
+                  title="Klik untuk lihat riwayat cetak"
                 >
                   <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider group-hover:text-violet-600 transition-colors">
-                      Efek AI Dreambooth
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider group-hover:text-blue-600 transition-colors">
+                      Sudah Dicetak
                     </p>
                     <h3 className="text-2xl font-black text-slate-900 mt-1">
-                      {aiEffects.filter((e) => e.enabled).length}
+                      {recentSessions.filter((s) => s.print_status === "printed").length}
                     </h3>
-                    <span className="text-[11px] text-violet-600 font-medium">Dari {aiEffects.length} gaya AI</span>
+                    <span className="text-[11px] text-blue-600 font-medium">Riwayat cetak selesai</span>
                   </div>
-                  <div className="w-12 h-12 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center group-hover:scale-105 transition-transform">
-                    <Wand2 className="w-6 h-6" />
+                  <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:scale-105 transition-transform">
+                    <CheckCircle2 className="w-6 h-6" />
                   </div>
                 </div>
 
@@ -2853,14 +2981,25 @@ export function AdminScreen({
                       setProviderModeInput(aiProviderSettings.mode);
                       setApiKeyInput(aiProviderSettings.apiKey || "");
                       setApiEndpointInput(aiProviderSettings.apiEndpoint || "");
-                      setStrengthInput(aiProviderSettings.strength || 0.85);
+                      setModelNameInput(aiProviderSettings.modelName || "fal-ai/fast-sdxl/image-to-image");
+                      setStrengthInput(aiProviderSettings.strength || 0.80);
+                      setProviderTestMsg(null);
                       setShowAiProviderModal(true);
                     }}
                     className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 hover:border-slate-300 transition-all cursor-pointer shadow-xs"
                     title="Pengaturan Engine Provider AI"
                   >
                     <Sliders className="w-3.5 h-3.5 text-violet-600" />
-                    <span>Engine: {aiProviderSettings.mode === "client" ? "Offline Gratis" : "Cloud AI"}</span>
+                    <span>
+                      Engine:{" "}
+                      {aiProviderSettings.mode === "client"
+                        ? "Offline Shaders"
+                        : aiProviderSettings.mode === "fal"
+                        ? "Fal.ai Cloud"
+                        : aiProviderSettings.mode === "replicate"
+                        ? "Replicate Cloud"
+                        : "Custom Webhook"}
+                    </span>
                   </button>
 
                   {/* Reset Defaults Button */}
@@ -3239,6 +3378,590 @@ export function AdminScreen({
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ──────────────── TAB: ANTRIAN & RIWAYAT CETAK (PRINT) ──────────────── */}
+          {activeNav === "print" && (
+            <div className="space-y-6 max-w-7xl mx-auto">
+              {/* Header Bar */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                      <span>Antrian & Riwayat Cetak Foto</span>
+                      <span className="text-xl">🖨️</span>
+                    </h2>
+                    {recentSessions.filter((s) => s.print_status !== "printed").length > 0 ? (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500 text-white shadow-xs animate-pulse">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>{recentSessions.filter((s) => s.print_status !== "printed").length} Foto Menunggu Dicetak</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Antrian Kosong (Semua Selesai)</span>
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Foto yang selesai dipotret pengunjung di booth akan otomatis masuk antrian di sini untuk dicetak ke printer.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Sound Alert Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setSoundAlertEnabled(!soundAlertEnabled)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                      soundAlertEnabled
+                        ? "bg-amber-50 border-amber-300 text-amber-800 shadow-xs"
+                        : "bg-slate-50 border-slate-200 text-slate-400"
+                    }`}
+                    title={soundAlertEnabled ? "Bunyikan nada saat ada foto baru" : "Nada dering dinonaktifkan"}
+                  >
+                    {soundAlertEnabled ? <Volume2 className="w-4 h-4 text-amber-600" /> : <VolumeX className="w-4 h-4" />}
+                    <span>{soundAlertEnabled ? "Nada Dering: Aktif" : "Mute"}</span>
+                  </button>
+
+                  {/* Auto-Refresh Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setAutoRefreshPrint(!autoRefreshPrint)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                      autoRefreshPrint
+                        ? "bg-emerald-50 border-emerald-300 text-emerald-800 shadow-xs"
+                        : "bg-slate-50 border-slate-200 text-slate-400"
+                    }`}
+                    title="Memperbarui data antrian otomatis tiap 3.5 detik"
+                  >
+                    <span className={`w-2 h-2 rounded-full ${autoRefreshPrint ? "bg-emerald-500 animate-ping" : "bg-slate-400"}`} />
+                    <span>{autoRefreshPrint ? "Live (Auto-Refresh)" : "Jeda"}</span>
+                  </button>
+
+                  {/* Manual Refresh */}
+                  <button
+                    type="button"
+                    onClick={loadSessions}
+                    disabled={loadingSessions}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-all cursor-pointer shadow-xs"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingSessions ? "animate-spin text-blue-600" : ""}`} />
+                    <span>Segarkan</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Sub-tabs & Search Row */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPrintTab("pending")}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      printTab === "pending"
+                        ? "bg-amber-500 text-white shadow-md shadow-amber-500/20"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    <Clock className="w-4 h-4" />
+                    <span>Menunggu Cetak</span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                        printTab === "pending" ? "bg-black/20 text-white" : "bg-amber-100 text-amber-800"
+                      }`}
+                    >
+                      {recentSessions.filter((s) => s.print_status !== "printed").length}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPrintTab("history")}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      printTab === "history"
+                        ? "bg-blue-600 text-white shadow-md shadow-blue-600/20"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Riwayat Sudah Dicetak</span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                        printTab === "history" ? "bg-black/20 text-white" : "bg-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {recentSessions.filter((s) => s.print_status === "printed").length}
+                    </span>
+                  </button>
+                </div>
+
+                {/* Search Input */}
+                <div className="relative w-full sm:w-72">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Cari kode sesi atau layout..."
+                    value={printSearchQuery}
+                    onChange={(e) => setPrintSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                  />
+                  {printSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setPrintSearchQuery("")}
+                      className="absolute right-2.5 top-2.5 text-xs text-slate-400 hover:text-slate-600"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* ── SUB-TAB 1: ANTRIAN MENUNGGU DICETAK ── */}
+              {printTab === "pending" && (
+                <div className="space-y-4">
+                  {(() => {
+                    const pendingList = recentSessions.filter((s) => {
+                      const isPending = s.print_status !== "printed";
+                      if (!isPending) return false;
+                      if (!printSearchQuery.trim()) return true;
+                      const q = printSearchQuery.toLowerCase();
+                      return (
+                        s.session_code.toLowerCase().includes(q) ||
+                        (s.layout && s.layout.toLowerCase().includes(q))
+                      );
+                    });
+
+                    if (pendingList.length === 0) {
+                      return (
+                        <div className="bg-white rounded-3xl border border-slate-200/90 p-12 text-center text-slate-400 space-y-3 shadow-xs">
+                          <div className="w-16 h-16 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center mx-auto text-3xl">
+                            🖨️
+                          </div>
+                          <h3 className="text-base font-bold text-slate-800">
+                            {printSearchQuery ? "Tidak ditemukan antrian yang cocok" : "Tidak Ada Antrian Cetak"}
+                          </h3>
+                          <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                            {printSearchQuery
+                              ? "Coba gunakan kata kunci pencarian kode sesi yang lain."
+                              : "Saat pengunjung menyelesaikan pemotretan di booth dan menekan 'Selesai & Cetak', foto akan langsung otomatis muncul di sini untuk dicetak."}
+                          </p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                        {pendingList.map((s, idx) => {
+                          const currentCopies = editCopiesMap[s.session_code] || s.print_copies || 1;
+                          const sizeInfo = PRINT_SIZES[s.layout] || { w: 10, h: 15, label: "10×15 cm" };
+                          const isPrintingThis = printingSessionCode === s.session_code;
+
+                          return (
+                            <div
+                              key={s.id || s.session_code || idx}
+                              className="bg-white rounded-2xl border-2 border-amber-300 shadow-md p-4 flex flex-col justify-between space-y-4 relative overflow-hidden transition-all hover:shadow-lg"
+                            >
+                              {/* Top Banner Tag */}
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping" />
+                                  <span className="text-[11px] font-bold text-amber-800 uppercase tracking-wider">
+                                    Menunggu Dicetak
+                                  </span>
+                                </div>
+                                <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200">
+                                  #{s.session_code}
+                                </span>
+                              </div>
+
+                              {/* Main Card Content */}
+                              <div className="flex gap-4 items-start">
+                                {/* Thumbnail Image with Click to Zoom */}
+                                <div
+                                  onClick={() => setSelectedPreviewStrip(s)}
+                                  className="w-28 sm:w-32 aspect-[2/3] bg-slate-900 rounded-xl overflow-hidden border-2 border-slate-200 shrink-0 relative cursor-pointer group shadow-inner"
+                                  title="Klik untuk pratinjau resolusi penuh"
+                                >
+                                  {s.strip_url ? (
+                                    <img
+                                      src={s.strip_url}
+                                      alt={`Foto #${s.session_code}`}
+                                      className="w-full h-full object-contain group-hover:scale-105 transition-transform"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-slate-500 text-xs">
+                                      No Img
+                                    </div>
+                                  )}
+                                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold gap-1">
+                                    <Eye className="w-4 h-4" />
+                                    <span>Zoom</span>
+                                  </div>
+                                </div>
+
+                                {/* Metadata and Details */}
+                                <div className="flex-1 space-y-2 text-xs">
+                                  <div>
+                                    <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">
+                                      Layout & Format
+                                    </span>
+                                    <p className="font-bold text-slate-900 text-sm">{s.layout}</p>
+                                    <p className="text-[11px] text-slate-500">{sizeInfo.label}</p>
+                                  </div>
+
+                                  <div>
+                                    <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">
+                                      Waktu Sesi
+                                    </span>
+                                    <p className="text-[11px] text-slate-700 font-medium">
+                                      {s.created_at
+                                        ? new Date(s.created_at).toLocaleTimeString("id-ID", {
+                                            hour: "2-digit",
+                                            minute: "2-digit",
+                                            second: "2-digit",
+                                          }) + " WIB"
+                                        : "Baru saja"}
+                                    </p>
+                                    <p className="text-[10px] text-slate-400">
+                                      {s.created_at ? new Date(s.created_at).toLocaleDateString("id-ID") : ""}
+                                    </p>
+                                  </div>
+
+                                  {/* Print Copies Counter */}
+                                  <div className="pt-1">
+                                    <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">
+                                      Jumlah Rangkap Cetak:
+                                    </span>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setEditCopiesMap((prev) => ({
+                                            ...prev,
+                                            [s.session_code]: Math.max(1, currentCopies - 1),
+                                          }))
+                                        }
+                                        className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 font-black flex items-center justify-center cursor-pointer text-sm shadow-xs"
+                                        title="Kurangi rangkap"
+                                      >
+                                        -
+                                      </button>
+                                      <span className="font-mono font-bold text-sm text-slate-900 w-6 text-center">
+                                        {currentCopies}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setEditCopiesMap((prev) => ({
+                                            ...prev,
+                                            [s.session_code]: Math.min(10, currentCopies + 1),
+                                          }))
+                                        }
+                                        className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 font-black flex items-center justify-center cursor-pointer text-sm shadow-xs"
+                                        title="Tambah rangkap"
+                                      >
+                                        +
+                                      </button>
+                                      <span className="text-[10px] text-slate-500 font-medium">lembar</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Action Buttons Row */}
+                              <div className="space-y-2 pt-2 border-t border-slate-100">
+                                <button
+                                  type="button"
+                                  onClick={() => handlePrintSession(s, currentCopies)}
+                                  disabled={isPrintingThis}
+                                  className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-98 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                                >
+                                  <Printer className={`w-4 h-4 ${isPrintingThis ? "animate-bounce" : ""}`} />
+                                  <span>{isPrintingThis ? "Sedang Memproses Cetak..." : `🖨️ CETAK SEKARANG (${currentCopies} Lembar)`}</span>
+                                </button>
+
+                                <div className="flex items-center justify-between gap-2 text-xs">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMarkAsPrinted(s)}
+                                    className="flex-1 py-1.5 px-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold transition-colors cursor-pointer text-center"
+                                    title="Tandai sudah dicetak tanpa membuka dialog print browser"
+                                  >
+                                    ✓ Tandai Selesai
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedPreviewStrip(s)}
+                                    className="py-1.5 px-2.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] font-semibold transition-colors cursor-pointer"
+                                    title="Lihat Pratinjau"
+                                  >
+                                    👁️ Detail
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteSessionItem(s)}
+                                    className="py-1.5 px-2 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 text-[11px] transition-colors cursor-pointer"
+                                    title="Hapus sesi ini"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* ── SUB-TAB 2: RIWAYAT SUDAH DICETAK ── */}
+              {printTab === "history" && (
+                <div className="space-y-4">
+                  {(() => {
+                    const historyList = recentSessions.filter((s) => {
+                      const isPrinted = s.print_status === "printed";
+                      if (!isPrinted) return false;
+                      if (!printSearchQuery.trim()) return true;
+                      const q = printSearchQuery.toLowerCase();
+                      return (
+                        s.session_code.toLowerCase().includes(q) ||
+                        (s.layout && s.layout.toLowerCase().includes(q))
+                      );
+                    });
+
+                    if (historyList.length === 0) {
+                      return (
+                        <div className="bg-white rounded-3xl border border-slate-200/90 p-12 text-center text-slate-400 space-y-3 shadow-xs">
+                          <div className="w-16 h-16 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto text-3xl">
+                            📋
+                          </div>
+                          <h3 className="text-base font-bold text-slate-800">
+                            {printSearchQuery ? "Tidak ditemukan riwayat yang cocok" : "Belum Ada Riwayat Cetak"}
+                          </h3>
+                          <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                            Foto yang sudah berhasil dicetak dari antrian akan tercatat di sini.
+                          </p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                <th className="py-3 px-4">Foto Strip</th>
+                                <th className="py-3 px-4">Kode Sesi</th>
+                                <th className="py-3 px-4">Layout</th>
+                                <th className="py-3 px-4">Waktu Sesi</th>
+                                <th className="py-3 px-4">Waktu Dicetak</th>
+                                <th className="py-3 px-4">Rangkap</th>
+                                <th className="py-3 px-4 text-right">Aksi</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {historyList.map((s, idx) => {
+                                const sizeInfo = PRINT_SIZES[s.layout] || { label: "10×15 cm" };
+                                const isPrintingThis = printingSessionCode === s.session_code;
+
+                                return (
+                                  <tr key={s.id || s.session_code || idx} className="hover:bg-slate-50/80 transition-colors">
+                                    {/* Thumbnail */}
+                                    <td className="py-3 px-4">
+                                      <div
+                                        onClick={() => setSelectedPreviewStrip(s)}
+                                        className="w-12 h-16 bg-slate-900 rounded-lg overflow-hidden cursor-pointer border border-slate-200 flex items-center justify-center relative group"
+                                      >
+                                        {s.strip_url ? (
+                                          <img
+                                            src={s.strip_url}
+                                            alt={s.session_code}
+                                            className="w-full h-full object-contain"
+                                          />
+                                        ) : (
+                                          <span className="text-[9px] text-slate-500">No Img</span>
+                                        )}
+                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                                          <Eye className="w-3.5 h-3.5" />
+                                        </div>
+                                      </div>
+                                    </td>
+
+                                    {/* Kode Sesi */}
+                                    <td className="py-3 px-4 font-mono font-bold text-slate-900">
+                                      #{s.session_code}
+                                    </td>
+
+                                    {/* Layout */}
+                                    <td className="py-3 px-4">
+                                      <span className="inline-block px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-bold text-[10px]">
+                                        {s.layout}
+                                      </span>
+                                      <span className="block text-[10px] text-slate-400 mt-0.5">
+                                        {sizeInfo.label}
+                                      </span>
+                                    </td>
+
+                                    {/* Waktu Sesi */}
+                                    <td className="py-3 px-4 text-slate-600">
+                                      {s.created_at
+                                        ? new Date(s.created_at).toLocaleString("id-ID", {
+                                            day: "numeric",
+                                            month: "short",
+                                            hour: "2-digit",
+                                            minute: "2-digit",
+                                          })
+                                        : "-"}
+                                    </td>
+
+                                    {/* Waktu Dicetak */}
+                                    <td className="py-3 px-4">
+                                      <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full text-[10px]">
+                                        <Check className="w-3 h-3 text-emerald-600" />
+                                        <span>
+                                          {s.printed_at
+                                            ? new Date(s.printed_at).toLocaleTimeString("id-ID", {
+                                                hour: "2-digit",
+                                                minute: "2-digit",
+                                              }) + " WIB"
+                                            : "Tercetak"}
+                                        </span>
+                                      </span>
+                                    </td>
+
+                                    {/* Rangkap */}
+                                    <td className="py-3 px-4 font-mono font-bold text-slate-700">
+                                      {s.print_copies || 1} Lembar
+                                    </td>
+
+                                    {/* Aksi */}
+                                    <td className="py-3 px-4 text-right">
+                                      <div className="inline-flex items-center gap-1.5">
+                                        {/* Cetak Ulang Button */}
+                                        <button
+                                          type="button"
+                                          onClick={() => handlePrintSession(s, s.print_copies || 1)}
+                                          disabled={isPrintingThis}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] transition-all cursor-pointer shadow-xs"
+                                          title="Cetak ulang foto ini"
+                                        >
+                                          <Printer className={`w-3 h-3 ${isPrintingThis ? "animate-bounce" : ""}`} />
+                                          <span>{isPrintingThis ? "Mencetak..." : "Cetak Ulang"}</span>
+                                        </button>
+
+                                        {/* Download PNG */}
+                                        <a
+                                          href={s.strip_url}
+                                          download={`yodha-${s.session_code}.png`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+                                          title="Unduh Strip PNG"
+                                        >
+                                          <Download className="w-3.5 h-3.5" />
+                                        </a>
+
+                                        {/* Move back to pending */}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleMoveToPending(s)}
+                                          className="p-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors cursor-pointer"
+                                          title="Kembalikan ke antrian cetak"
+                                        >
+                                          <RotateCcw className="w-3.5 h-3.5" />
+                                        </button>
+
+                                        {/* Delete */}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteSessionItem(s)}
+                                          className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 transition-colors cursor-pointer"
+                                          title="Hapus riwayat ini"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Modal Full-Resolution Preview Strip */}
+          {selectedPreviewStrip && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+              <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border-4 border-slate-900 flex flex-col items-center gap-4 max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between w-full border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-base">
+                      Pratinjau Foto Strip #{selectedPreviewStrip.session_code}
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Layout: {selectedPreviewStrip.layout} • {selectedPreviewStrip.created_at ? new Date(selectedPreviewStrip.created_at).toLocaleString("id-ID") : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPreviewStrip(null)}
+                    className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center font-bold text-sm cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Strip Image */}
+                <div className="w-full flex items-center justify-center p-2 bg-slate-950 rounded-2xl border border-slate-800 shadow-inner">
+                  <img
+                    src={selectedPreviewStrip.strip_url}
+                    alt={selectedPreviewStrip.session_code}
+                    className="max-h-[60vh] object-contain rounded"
+                  />
+                </div>
+
+                {/* Action Buttons in Modal */}
+                <div className="flex items-center justify-between w-full pt-2 gap-3">
+                  <a
+                    href={selectedPreviewStrip.strip_url}
+                    download={`yodha-${selectedPreviewStrip.session_code}.png`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Unduh PNG</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sess = selectedPreviewStrip;
+                      setSelectedPreviewStrip(null);
+                      handlePrintSession(sess);
+                    }}
+                    className="flex-1 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>🖨️ Cetak Foto Ini Sekarang</span>
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -5013,40 +5736,73 @@ export function AdminScreen({
               </button>
             </div>
 
-            <form onSubmit={handleSaveAiProviderModal} className="p-6 space-y-4">
+            <form onSubmit={handleSaveAiProviderModal} className="p-6 space-y-4 max-h-[78vh] overflow-y-auto">
               {/* Mode Selection */}
               <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-700">Mode Mesin Transformasi</label>
+                <label className="block text-xs font-bold text-slate-700">Pilih Mesin Generator AI</label>
                 <div className="grid grid-cols-1 gap-2">
+                  {/* 1. Fal.ai */}
                   <label
                     className={`p-3 rounded-2xl border flex items-start gap-3 cursor-pointer transition-all ${
-                      providerModeInput === "client"
-                        ? "border-violet-500 bg-violet-50/60 ring-2 ring-violet-500/20"
+                      providerModeInput === "fal"
+                        ? "border-violet-500 bg-violet-50/70 ring-2 ring-violet-500/20"
                         : "border-slate-200 bg-white hover:bg-slate-50"
                     }`}
                   >
                     <input
                       type="radio"
                       name="ai-mode"
-                      value="client"
-                      checked={providerModeInput === "client"}
-                      onChange={() => setProviderModeInput("client")}
+                      value="fal"
+                      checked={providerModeInput === "fal"}
+                      onChange={() => setProviderModeInput("fal")}
                       className="mt-0.5 accent-violet-600"
                     />
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 block">
-                        ⚡ Client-Side Neural Shaders (Offline, Cepat & 100% Gratis)
-                      </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-900 block">
+                          ⚡ Fal.ai Cloud Generative AI
+                        </span>
+                        <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded">
+                          Rekomendasi (Cepat ~2 Detik)
+                        </span>
+                      </div>
                       <p className="text-[11px] text-slate-500 mt-0.5">
-                        Memproses foto langsung di komputer booth/kiosk dalam waktu kurang dari 1 detik tanpa perlu koneksi internet ataupun kuota API berbayar.
+                        Inference super cepat berbasis SDXL / Face-to-Many. Foto benar-benar ditransformasikan menjadi karakter 3D Pixar, jas formal, atau anime asli.
                       </p>
                     </div>
                   </label>
 
+                  {/* 2. Replicate */}
+                  <label
+                    className={`p-3 rounded-2xl border flex items-start gap-3 cursor-pointer transition-all ${
+                      providerModeInput === "replicate"
+                        ? "border-violet-500 bg-violet-50/70 ring-2 ring-violet-500/20"
+                        : "border-slate-200 bg-white hover:bg-slate-50"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="ai-mode"
+                      value="replicate"
+                      checked={providerModeInput === "replicate"}
+                      onChange={() => setProviderModeInput("replicate")}
+                      className="mt-0.5 accent-violet-600"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block">
+                        🔮 Replicate Cloud API (SDXL / Flux / Face-to-Many)
+                      </span>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Menghubungkan ke ribuan model AI di Replicate.com menggunakan API token akun Anda.
+                      </p>
+                    </div>
+                  </label>
+
+                  {/* 3. Custom Webhook */}
                   <label
                     className={`p-3 rounded-2xl border flex items-start gap-3 cursor-pointer transition-all ${
                       providerModeInput === "custom_webhook"
-                        ? "border-violet-500 bg-violet-50/60 ring-2 ring-violet-500/20"
+                        ? "border-violet-500 bg-violet-50/70 ring-2 ring-violet-500/20"
                         : "border-slate-200 bg-white hover:bg-slate-50"
                     }`}
                   >
@@ -5060,16 +5816,124 @@ export function AdminScreen({
                     />
                     <div>
                       <span className="text-xs font-bold text-slate-900 block">
-                        🌐 Cloud Generative API (SDXL / ControlNet / Webhook)
+                        🌐 Webhook / Server AI Lokal (ComfyUI / SD-WebUI)
                       </span>
                       <p className="text-[11px] text-slate-500 mt-0.5">
-                        Menghubungkan ke API cloud generator (Fal.ai, Replicate, atau server AI kustom) untuk regenerasi gambar tingkat tinggi.
+                        Gunakan GPU lokal photobooth (RTX 3060/4060) atau server webhook private Anda sendiri tanpa batas kuota.
+                      </p>
+                    </div>
+                  </label>
+
+                  {/* 4. Client Offline */}
+                  <label
+                    className={`p-3 rounded-2xl border flex items-start gap-3 cursor-pointer transition-all ${
+                      providerModeInput === "client"
+                        ? "border-violet-500 bg-violet-50/70 ring-2 ring-violet-500/20"
+                        : "border-slate-200 bg-white hover:bg-slate-50"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="ai-mode"
+                      value="client"
+                      checked={providerModeInput === "client"}
+                      onChange={() => setProviderModeInput("client")}
+                      className="mt-0.5 accent-violet-600"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block">
+                        💻 Offline Neural Shaders (Tanpa Internet / 100% Cepat)
+                      </span>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Diproses langsung di browser komputer booth tanpa internet. Menggunakan filter 2D retouch dan formal overlay.
                       </p>
                     </div>
                   </label>
                 </div>
               </div>
 
+              {/* Fal.ai Configuration Fields */}
+              {providerModeInput === "fal" && (
+                <div className="space-y-3 pt-2 border-t border-slate-100 animate-in fade-in">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-700">
+                        Fal.ai API Key (FAL_KEY)
+                      </label>
+                      <a
+                        href="https://fal.ai/dashboard/keys"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-violet-600 font-semibold hover:underline"
+                      >
+                        Dapatkan Key di fal.ai ↗
+                      </a>
+                    </div>
+                    <input
+                      type="password"
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      placeholder="e.g. f1-xxxxxxxxxxxxxxxxxxxxxxx"
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50 font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-700">Model Fal.ai</label>
+                    <input
+                      type="text"
+                      value={modelNameInput}
+                      onChange={(e) => setModelNameInput(e.target.value)}
+                      placeholder="fal-ai/fast-sdxl/image-to-image atau fal-ai/face-to-many"
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50 font-mono"
+                    />
+                    <p className="text-[10px] text-slate-400">
+                      Standar: <code>fal-ai/fast-sdxl/image-to-image</code> atau <code>fal-ai/face-to-many</code>
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Replicate Configuration Fields */}
+              {providerModeInput === "replicate" && (
+                <div className="space-y-3 pt-2 border-t border-slate-100 animate-in fade-in">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-700">
+                        Replicate API Token
+                      </label>
+                      <a
+                        href="https://replicate.com/account/api-tokens"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-violet-600 font-semibold hover:underline"
+                      >
+                        Dapatkan Token di replicate.com ↗
+                      </a>
+                    </div>
+                    <input
+                      type="password"
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      placeholder="r8_xxxxxxxxxxxxxxxxxxxxxxx"
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50 font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-700">Model Name / Endpoint</label>
+                    <input
+                      type="text"
+                      value={modelNameInput}
+                      onChange={(e) => setModelNameInput(e.target.value)}
+                      placeholder="stability-ai/sdxl atau fofr/face-to-many"
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50 font-mono"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Custom Webhook Configuration Fields */}
               {providerModeInput === "custom_webhook" && (
                 <div className="space-y-3 pt-2 border-t border-slate-100 animate-in fade-in">
                   <div className="space-y-1">
@@ -5078,7 +5942,7 @@ export function AdminScreen({
                       type="url"
                       value={apiEndpointInput}
                       onChange={(e) => setApiEndpointInput(e.target.value)}
-                      placeholder="https://api.your-ai-worker.com/v1/transform"
+                      placeholder="http://127.0.0.1:8188/api/transform atau https://api.anda.com/v1"
                       className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50 font-mono"
                     />
                   </div>
@@ -5096,22 +5960,61 @@ export function AdminScreen({
                 </div>
               )}
 
-              {/* Strength Slider */}
-              <div className="space-y-1 pt-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-700">Intensitas Efek AI:</span>
-                  <span className="font-mono font-bold text-violet-600">{Math.round(strengthInput * 100)}%</span>
+              {/* Strength Slider for Generative Modes */}
+              {providerModeInput !== "client" && (
+                <div className="space-y-1 pt-1 border-t border-slate-100">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-700">Intensitas Transformasi AI:</span>
+                    <span className="font-mono font-bold text-violet-600">{Math.round(strengthInput * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.4"
+                    max="0.95"
+                    step="0.05"
+                    value={strengthInput}
+                    onChange={(e) => setStrengthInput(Number(e.target.value))}
+                    className="w-full accent-violet-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-400">
+                    <span>Mirip Foto Asli (40%)</span>
+                    <span>Standar (80%)</span>
+                    <span>Perubahan Kuat (95%)</span>
+                  </div>
                 </div>
-                <input
-                  type="range"
-                  min="0.3"
-                  max="1.0"
-                  step="0.05"
-                  value={strengthInput}
-                  onChange={(e) => setStrengthInput(Number(e.target.value))}
-                  className="w-full accent-violet-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
-                />
-              </div>
+              )}
+
+              {/* Test Connection Button & Result Box */}
+              {providerModeInput !== "client" && (
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={handleTestAiProvider}
+                    disabled={isTestingProvider}
+                    className="w-full py-2 px-3 rounded-xl border border-violet-200 bg-violet-50 hover:bg-violet-100 text-violet-800 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <Sparkles className={`w-3.5 h-3.5 ${isTestingProvider ? "animate-spin" : ""}`} />
+                    <span>{isTestingProvider ? "Menguji Koneksi..." : "🧪 Tes Koneksi API Sekarang"}</span>
+                  </button>
+
+                  {providerTestMsg && (
+                    <div
+                      className={`mt-2 p-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 ${
+                        providerTestMsg.success
+                          ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                          : "bg-rose-50 text-rose-800 border border-rose-200"
+                      }`}
+                    >
+                      {providerTestMsg.success ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                      )}
+                      <span>{providerTestMsg.text}</span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
                 <button
