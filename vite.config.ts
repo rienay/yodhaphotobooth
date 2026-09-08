@@ -22,6 +22,9 @@ export default defineConfig({
       "import.meta.env.SUPABASE_ANON_KEY": JSON.stringify(
         process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || ""
       ),
+      "import.meta.env.VITE_XENDIT_SECRET_KEY": JSON.stringify(
+        process.env.VITE_XENDIT_SECRET_KEY || ""
+      ),
     },
   },
   tanstackStart: {

@@ -53,6 +53,8 @@ import raicab17Asset from "@/assets/raicab/17.png";
 import raicab18Asset from "@/assets/raicab/18.png";
 
 import { CustomerDownloadPortal } from "@/components/CustomerDownloadPortal";
+import { PaymentScreen } from "@/components/PaymentScreen";
+import { getXenditConfig } from "@/lib/xendit";
 
 export const Route = createFileRoute("/")({
   validateSearch: (search: Record<string, unknown>): { session?: string; download?: string; mode?: string } => {
@@ -77,7 +79,7 @@ export const Route = createFileRoute("/")({
   component: Photobooth,
 });
 
-type Screen = "home" | "frame" | "filter" | "shoot" | "review" | "result" | "admin";
+type Screen = "home" | "frame" | "payment" | "filter" | "shoot" | "review" | "result" | "admin";
 type FrameId = "cafe" | "gameboy" | "bedroom" | "template";
 type LayoutId = "3x1" | "3x2" | "2x1" | "1x1" | "2x2" | "4x2";
 
@@ -239,6 +241,7 @@ function Photobooth() {
   const [photos, setPhotos] = useState<string[]>([]);
   const [liveVideos, setLiveVideos] = useState<string[]>([]);
   const [strip, setStrip] = useState<string | null>(null);
+  const [isCurrentSessionPaid, setIsCurrentSessionPaid] = useState(false);
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(isBoothMode);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [cameraFilters, setCameraFilters] = useState<CameraFilter[]>(() => loadLocalFilters());
@@ -499,9 +502,30 @@ function Photobooth() {
               setStrip(null);
               setSelectedFilter("normal");
               setSelectedAiEffect(null);
-              setScreen("shoot");
+              const xenditCfg = getXenditConfig();
+              if (xenditCfg.paymentEnabled && !isCurrentSessionPaid) {
+                setScreen("payment");
+              } else {
+                setScreen("shoot");
+              }
             }}
             templates={templates}
+          />
+        )}
+        {screen === "payment" && (
+          <PaymentScreen
+            layoutName={LAYOUTS.find((l) => l.id === layout)?.name || layout}
+            onBack={() => setScreen("frame")}
+            onPaid={() => {
+              setIsCurrentSessionPaid(true);
+              ensureFullscreen();
+              setPhotos([]);
+              setLiveVideos([]);
+              setStrip(null);
+              setSelectedFilter("normal");
+              setSelectedAiEffect(null);
+              setScreen("shoot");
+            }}
           />
         )}
         {screen === "filter" && (
@@ -580,7 +604,7 @@ function Photobooth() {
             strip={strip}
             setStrip={setStrip}
             onRetake={() => { setPhotos([]); setLiveVideos([]); setStrip(null); setScreen("shoot"); }}
-            onHome={() => { setPhotos([]); setLiveVideos([]); setStrip(null); setScreen("home"); }}
+            onHome={() => { setPhotos([]); setLiveVideos([]); setStrip(null); setIsCurrentSessionPaid(false); setScreen("home"); }}
             templates={templates}
           />
         )}
