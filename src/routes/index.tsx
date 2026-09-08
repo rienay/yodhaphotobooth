@@ -1017,7 +1017,7 @@ function FrameScreen({
         )}
 
         {/* Bottom Buttons */}
-        <div className="flex gap-4 w-full pt-1">
+        <div className="flex gap-4 w-full mt-10 sm:mt-14">
           <button
             className="pixel-btn-powder flex-1 py-2.5 sm:py-3 text-xs sm:text-sm cursor-pointer"
             onClick={onBack}
