@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
-import { AdminScreen, Template } from "@/components/AdminScreen";
+import type { Template } from "@/components/AdminScreen";
+const AdminScreen = lazy(() => import("@/components/AdminScreen").then((m) => ({ default: m.AdminScreen })));
 import { AdminLogin } from "@/components/AdminLogin";
 import { TemplateDB, CustomTemplate, SessionDB, SettingsDB } from "@/lib/db";
 import { isSupabaseConfigured, uploadToStorage, getSupabaseAnonKey, getSupabaseUrl, compressDataUrlToJpegBlob } from "@/lib/supabase";
@@ -223,6 +224,9 @@ function Photobooth() {
 
   useEffect(() => {
     setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
     setIsAdminAuth(isAdminAuthenticated());
     const isBooth = search?.mode === "booth" || (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mode") === "booth");
     setIsBoothMode(isBooth);
@@ -410,7 +414,7 @@ function Photobooth() {
     return (
       <div className="min-h-screen bg-[#FDFBF7] flex items-center justify-center">
         <div className="pixel text-sm text-[#3A2A40] animate-pulse flex items-center gap-2">
-          <span>📸</span> Memuat Photobooth...
+          Memuat Photobooth...
         </div>
       </div>
     );
@@ -429,17 +433,23 @@ function Photobooth() {
     }
 
     return (
-      <AdminScreen
-        templates={templates}
-        onToggleTemplate={handleToggleTemplate}
-        onAddTemplate={handleAddTemplate}
-        onDeleteTemplate={handleDeleteTemplate}
-        onLaunchBooth={() => {
-          createBoothSession();
-          setIsBoothMode(true);
-        }}
-        onLogout={() => setIsAdminAuth(false)}
-      />
+      <Suspense fallback={
+        <div className="min-h-screen bg-slate-900 flex items-center justify-center text-slate-400 text-xs font-mono">
+          Memuat Dashboard Admin...
+        </div>
+      }>
+        <AdminScreen
+          templates={templates}
+          onToggleTemplate={handleToggleTemplate}
+          onAddTemplate={handleAddTemplate}
+          onDeleteTemplate={handleDeleteTemplate}
+          onLaunchBooth={() => {
+            createBoothSession();
+            setIsBoothMode(true);
+          }}
+          onLogout={() => setIsAdminAuth(false)}
+        />
+      </Suspense>
     );
   }
 
