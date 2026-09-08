@@ -484,14 +484,21 @@ function Photobooth() {
         )}
         {screen === "frame" && (
           <FrameScreen
-            selectedLayout={layout}
-            setSelectedLayout={setLayout}
+            frame={frame}
+            setFrame={setFrame}
+            layout={layout}
+            setLayout={setLayout}
             variant={variant}
             setVariant={setVariant}
             onBack={() => setScreen("home")}
             onNext={() => {
               ensureFullscreen();
-              setScreen("filter");
+              setPhotos([]);
+              setLiveVideos([]);
+              setStrip(null);
+              setSelectedFilter("normal");
+              setSelectedAiEffect(null);
+              setScreen("shoot");
             }}
             templates={templates}
           />
@@ -519,10 +526,10 @@ function Photobooth() {
             frame={frame}
             layout={layout}
             variant={variant}
-            selectedFilter={selectedFilter}
+            selectedFilter="normal"
             filters={cameraFilters}
             aiEffects={aiEffects}
-            selectedAiEffect={selectedAiEffect}
+            selectedAiEffect={null}
             photos={photos}
             setPhotos={setPhotos}
             onPhotosCaptured={(captured, capturedVideos) => {
@@ -530,7 +537,7 @@ function Photobooth() {
               setLiveVideos(capturedVideos);
               setScreen("review");
             }}
-            onBack={() => setScreen("filter")}
+            onBack={() => setScreen("frame")}
             isFullscreen={isFullscreen}
             onToggleFullscreen={toggleFullscreen}
             templates={templates}
@@ -545,9 +552,17 @@ function Photobooth() {
             layout={layout}
             variant={variant}
             selectedFilter={selectedFilter}
-            filters={cameraFilters}
+            setSelectedFilter={setSelectedFilter}
+            selectedAiEffect={selectedAiEffect}
+            setSelectedAiEffect={setSelectedAiEffect}
+            filters={cameraFilters.filter(f => f.enabled !== false)}
+            aiEffects={aiEffects.filter(e => e.enabled !== false)}
             templates={templates}
-            onBack={() => setScreen("shoot")}
+            onBack={() => {
+              setPhotos([]);
+              setLiveVideos([]);
+              setScreen("shoot");
+            }}
             onFinish={async (finalStrip) => {
               setStrip(finalStrip);
               setScreen("result");
@@ -2043,7 +2058,45 @@ function ShootScreen({
   );
 }
 
-/* ───────────────────────── Review & Retake Per Photo ───────────────────────── */
+/* ───────────────────────── Review & Post-Shot Filter/AI Selection ───────────────────────── */
+
+async function preparePhotosWithEffect(
+  rawPhotos: string[],
+  filterCss?: string,
+  aiShaderType?: string
+): Promise<string[]> {
+  if ((!filterCss || filterCss === "none") && !aiShaderType) {
+    return rawPhotos;
+  }
+  return Promise.all(
+    rawPhotos.map((dataUrl) => {
+      return new Promise<string>((resolve) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve(dataUrl);
+            return;
+          }
+          if (filterCss && filterCss !== "none") {
+            ctx.filter = filterCss;
+          }
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          if (aiShaderType) {
+            applyAiShaderToContext(ctx, aiShaderType as any, canvas.width, canvas.height);
+          }
+          resolve(canvas.toDataURL("image/jpeg", 0.95));
+        };
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+      });
+    })
+  );
+}
 
 function ReviewScreen({
   photos,
@@ -2052,11 +2105,15 @@ function ReviewScreen({
   setLiveVideos,
   layout,
   variant,
-  selectedFilter,
+  selectedFilter = "normal",
+  setSelectedFilter,
+  selectedAiEffect = null,
+  setSelectedAiEffect,
   templates,
   onBack,
   onFinish,
   filters = PHOTO_FILTERS,
+  aiEffects = DEFAULT_AI_EFFECTS,
 }: {
   photos: string[];
   setPhotos: (p: string[]) => void;
@@ -2064,22 +2121,152 @@ function ReviewScreen({
   setLiveVideos: (v: string[]) => void;
   layout: LayoutId;
   variant: string;
-  selectedFilter: string;
+  selectedFilter?: string;
+  setSelectedFilter?: (f: string) => void;
+  selectedAiEffect?: string | null;
+  setSelectedAiEffect?: (id: string | null) => void;
   templates: Template[];
   onBack: () => void;
   onFinish: (finalStrip: string) => Promise<void> | void;
   filters?: CameraFilter[];
+  aiEffects?: AiEffect[];
 }) {
   const [retakeIdx, setRetakeIdx] = useState<number | null>(null);
   const [retakeCountdown, setRetakeCountdown] = useState<number | null>(null);
   const [retakeFlashing, setRetakeFlashing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Local effect selections
+  const [selectedFilterLocal, setSelectedFilterLocal] = useState<string>(selectedFilter || "normal");
+  const [selectedAiLocal, setSelectedAiLocal] = useState<string | null>(selectedAiEffect || null);
+  const [filterCategory, setFilterCategory] = useState<"all" | "ai" | "color">("all");
+  const carouselRef = useRef<HTMLDivElement | null>(null);
+
   const retakeVideoRef = useRef<HTMLVideoElement | null>(null);
   const retakeStreamRef = useRef<MediaStream | null>(null);
 
   const activeFilters = filters && filters.length > 0 ? filters : PHOTO_FILTERS;
-  const activeFilter = activeFilters.find((f) => f.id === selectedFilter) || activeFilters[0];
+  const currentFilterObj = activeFilters.find((f) => f.id === selectedFilterLocal) || activeFilters[0];
+  const currentAiObj = selectedAiLocal ? aiEffects.find((a) => a.id === selectedAiLocal) : null;
+
+  // Compute live CSS preview string
+  const previewFilterCss = selectedAiLocal
+    ? getAiPreviewCss(currentAiObj?.shaderType || "3d_movie")
+    : (currentFilterObj?.css || "none");
+
+  // Template and hole detection for right-side frame preview
+  const activeTemplate =
+    templates.find((t) => t.id === `${layout}_${variant}` || t.id === variant || t.presetId === variant) ||
+    templates.find((t) => t.layout === layout && t.enabled) ||
+    templates.find((t) => t.layout === layout) ||
+    templates[0];
+  const layoutConfig = LAYOUTS.find((l) => l.id === layout) || LAYOUTS[0];
+  const effectivePreset = activeTemplate?.presetId || variant;
+  const variantConfig = getVariantHoleConfig(layout, effectivePreset);
+  const overlaySrc = activeTemplate?.img || "";
+
+  const [detectedHoles, setDetectedHoles] = useState<{ left: number; top: number; width: number; height: number }[]>([]);
+  const [overlayDimensions, setOverlayDimensions] = useState<{ w: number; h: number } | null>(null);
+  const [hasTransparentHoles, setHasTransparentHoles] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    async function loadAndDetect() {
+      let dims: { w: number; h: number } | null = null;
+      let hasTransparency = false;
+
+      if (overlaySrc) {
+        try {
+          const img = await loadImg(overlaySrc);
+          if (!active) return;
+          const w = img.naturalWidth || img.width;
+          const h = img.naturalHeight || img.height;
+          if (w && h) {
+            dims = { w, h };
+            setOverlayDimensions(dims);
+          }
+          try {
+            const holes = detectHolesFromImage(img);
+            if (holes.length > 0) {
+              hasTransparency = true;
+            }
+          } catch {}
+        } catch (e) {
+          console.warn("Could not inspect overlay image dimensions:", e);
+        }
+      }
+
+      if (!dims) {
+        dims = getDefaultDimensionsForLayout(layout);
+        setOverlayDimensions(dims);
+      }
+
+      // 1. Photo boxes explicitly defined in template
+      if (activeTemplate?.photoBoxes && activeTemplate.photoBoxes.length > 0) {
+        const pctHoles = activeTemplate.photoBoxes.map((box) => ({
+          left: box.x,
+          top: box.y,
+          width: box.w,
+          height: box.h,
+        }));
+        setDetectedHoles(sortHolesGrid(pctHoles));
+        setHasTransparentHoles(hasTransparency);
+        return;
+      }
+
+      // 2. Transparent holes detected automatically from image
+      if (overlaySrc && dims) {
+        try {
+          const img = await loadImg(overlaySrc);
+          if (!active) return;
+          const holes = detectHolesFromImage(img);
+          if (holes.length > 0) {
+            const w = dims.w;
+            const h = dims.h;
+            const pctHoles = holes.map((hole) => ({
+              left: (hole.x / w) * 100,
+              top: (hole.y / h) * 100,
+              width: (hole.w / w) * 100,
+              height: (hole.h / h) * 100,
+            }));
+            setDetectedHoles(sortHolesGrid(pctHoles));
+            setHasTransparentHoles(true);
+            return;
+          }
+        } catch {}
+      }
+
+      // 3. Preset variant config (legacy presets)
+      if (variantConfig && variantConfig.holes.length > 0) {
+        setDetectedHoles(sortHolesGrid(variantConfig.holes));
+        setHasTransparentHoles(hasTransparency);
+        return;
+      }
+
+      // 4. Default layout boxes fallback
+      const defBoxes = getDefaultBoxesForLayout(layout);
+      const pctDef = defBoxes.map((b) => ({
+        left: b.x,
+        top: b.y,
+        width: b.w,
+        height: b.h,
+      }));
+      setDetectedHoles(sortHolesGrid(pctDef));
+      setHasTransparentHoles(hasTransparency);
+    }
+    loadAndDetect();
+    return () => {
+      active = false;
+    };
+  }, [overlaySrc, layout, variantConfig, activeTemplate]);
+
+  // Carousel scroll helper
+  const scrollCarousel = (direction: "left" | "right") => {
+    if (carouselRef.current) {
+      const offset = direction === "left" ? -320 : 320;
+      carouselRef.current.scrollBy({ left: offset, behavior: "smooth" });
+    }
+  };
 
   // Open camera when retakeIdx is set
   useEffect(() => {
@@ -2144,9 +2331,6 @@ function ReviewScreen({
     if (ctx) {
       ctx.translate(w, 0);
       ctx.scale(-1, 1);
-      if (activeFilter.css && activeFilter.css !== "none") {
-        ctx.filter = activeFilter.css;
-      }
       const savedZoom = parseFloat(localStorage.getItem("yodha_camera_zoom") || "0.85") || 0.85;
       if (savedZoom !== 1.0) {
         ctx.translate(w / 2, h / 2);
@@ -2178,19 +2362,29 @@ function ReviewScreen({
     setIsProcessing(true);
 
     try {
-      const activeTemplate = templates.find((t) => t.id === `${layout}_${variant}` || t.id === variant);
+      // 1. Process photos with selected filter or AI effect shader
+      const activeAi = selectedAiLocal ? aiEffects.find((a) => a.id === selectedAiLocal) : null;
+      const activeFilt = activeFilters.find((f) => f.id === selectedFilterLocal);
+
+      const processedPhotos = await preparePhotosWithEffect(
+        photos,
+        selectedAiLocal ? undefined : (activeFilt?.css !== "none" ? activeFilt?.css : undefined),
+        activeAi ? activeAi.shaderType : undefined
+      );
+
       const customImg = activeTemplate?.img;
       const presetId = activeTemplate?.presetId || variant;
 
       let stripResult: string;
       if (customImg) {
-        stripResult = await composeTemplateFrame(photos, variant, customImg, presetId, layout, activeTemplate?.photoBoxes);
+        stripResult = await composeTemplateFrame(processedPhotos, variant, customImg, presetId, layout, activeTemplate?.photoBoxes);
       } else if (layout === "2x1" && variant !== "default") {
-        stripResult = await compose2x1Variant(photos, variant, customImg, presetId);
+        stripResult = await compose2x1Variant(processedPhotos, variant, customImg, presetId);
       } else {
-        stripResult = await composeStrip(photos, "template", layout);
+        stripResult = await composeStrip(processedPhotos, "template", layout);
       }
 
+      setPhotos(processedPhotos);
       await onFinish(stripResult);
     } catch (e: any) {
       console.error("Failed composing strip with custom template, using safe fallback:", e);
@@ -2206,88 +2400,427 @@ function ReviewScreen({
     }
   };
 
+  // Build items list for carousel
+  const carouselItems: Array<{
+    type: "normal" | "ai" | "filter";
+    id: string;
+    name: string;
+    emoji?: string;
+    css?: string;
+    shaderType?: string;
+    categoryLabel?: string;
+  }> = [];
+
+  // Normal always first
+  if (filterCategory === "all" || filterCategory === "color") {
+    carouselItems.push({
+      type: "normal",
+      id: "normal",
+      name: "Normal",
+      emoji: "📷",
+      css: "none",
+    });
+  }
+
+  // AI Effects
+  if (filterCategory === "all" || filterCategory === "ai") {
+    aiEffects
+      .filter((e) => e.enabled !== false)
+      .forEach((e) => {
+        carouselItems.push({
+          type: "ai",
+          id: e.id,
+          name: e.name,
+          emoji: e.emoji,
+          shaderType: e.shaderType,
+          categoryLabel: e.categoryLabel,
+        });
+      });
+  }
+
+  // Color Filters (excluding normal)
+  if (filterCategory === "all" || filterCategory === "color") {
+    activeFilters
+      .filter((f) => f.enabled !== false && f.id !== "normal")
+      .forEach((f) => {
+        carouselItems.push({
+          type: "filter",
+          id: f.id,
+          name: f.name,
+          css: f.css,
+        });
+      });
+  }
+
+  const activeLabel = selectedAiLocal
+    ? `✨ Efek AI: ${currentAiObj?.name || "Dreambooth"}`
+    : `🎨 Filter: ${currentFilterObj?.name || "Normal"}`;
+
   return (
-    <div className="w-full max-w-4xl flex flex-col items-center gap-6">
+    <div className="w-full max-w-6xl mx-auto flex flex-col items-center gap-4 px-2 sm:px-4 py-2">
+      {/* Title Header */}
       <div className="text-center space-y-1">
         <h2 className="pixel text-lg sm:text-2xl text-[var(--color-ink)]">
           PRATINJAU HASIL FOTO 📸
         </h2>
         <p className="text-xs sm:text-sm text-slate-500 font-sans">
-          Klik foto yang ingin diulang (retake), atau klik <strong>Selesai & Cetak</strong> jika sudah puas!
+          Lihat foto di bingkai, pilih gaya filter & efek di bawah, atau klik foto di kiri jika ingin foto ulang!
         </p>
       </div>
 
-      {/* Grid of photos - Dynamically centered based on count */}
-      <div
-        className={`w-full flex flex-wrap justify-center items-center gap-4 ${
-          photos.length === 1
-            ? "max-w-md mx-auto"
-            : photos.length === 2
-            ? "max-w-2xl mx-auto"
-            : photos.length === 3
-            ? "max-w-3xl mx-auto"
-            : "max-w-2xl mx-auto"
-        }`}
-      >
-        {photos.map((photo, i) => (
-          <div
-            key={i}
-            onClick={() => setRetakeIdx(i)}
-            style={{
-              width:
-                photos.length === 1
-                  ? "100%"
-                  : photos.length === 2
-                  ? "calc(50% - 0.5rem)"
-                  : photos.length === 3
-                  ? "calc(33.333% - 0.75rem)"
-                  : "calc(50% - 0.5rem)",
-              minWidth: photos.length === 1 ? "auto" : "240px",
-            }}
-            className="group relative aspect-[4/3] rounded-2xl overflow-hidden border-4 border-[#3A2A40] bg-slate-900 shadow-[6px_6px_0_0_rgba(58,42,64,0.2)] cursor-pointer hover:scale-[1.02] transition-transform"
-          >
-            <img src={photo} alt={`Foto ${i + 1}`} className="w-full h-full object-cover" />
+      {/* Main 2-Column Split: Left (Photos with Retake) vs Right (Frame Preview) */}
+      <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-start">
+        {/* ── LEFT COLUMN: Foto biasa yang bisa di foto ulang (5/12 on lg) ── */}
+        <div className="lg:col-span-5 flex flex-col gap-3 bg-white border-4 border-[#3A2A40] rounded-2xl p-3.5 shadow-[5px_5px_0_0_rgba(58,42,64,0.18)]">
+          <div className="flex items-center justify-between border-b-2 border-slate-100 pb-2 px-1">
+            <div>
+              <h3 className="pixel text-xs sm:text-sm text-[#3A2A40] flex items-center gap-1.5">
+                <span>📸</span>
+                <span>FOTO SATUAN ({photos.length})</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 font-sans">
+                Klik tombol "Ulang" jika ada pose yang ingin diperbaiki
+              </p>
+            </div>
+            <span className="text-xs bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">
+              {photos.length} Pose
+            </span>
+          </div>
 
-            {/* Badge top-left */}
-            <div className="absolute top-3 left-3 px-2.5 py-1 rounded-md bg-black/70 backdrop-blur-sm border border-white/20 text-white text-[10px] font-sans font-bold flex items-center gap-1">
-              <span>Foto #{i + 1}</span>
+          {/* Photos Grid */}
+          <div
+            className={`grid gap-2.5 max-h-[380px] sm:max-h-[440px] overflow-y-auto pr-1 ${
+              photos.length === 1 ? "grid-cols-1" : "grid-cols-2"
+            }`}
+          >
+            {photos.map((photo, i) => (
+              <div
+                key={i}
+                className="group relative aspect-[4/3] rounded-xl overflow-hidden border-2 border-[#3A2A40] bg-slate-900 shadow-sm flex flex-col justify-end"
+              >
+                <img
+                  src={photo}
+                  alt={`Foto ${i + 1}`}
+                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
+                />
+
+                {/* Badge Number */}
+                <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-sm text-white font-mono text-[10px] font-bold z-10">
+                  Foto #{i + 1}
+                </div>
+
+                {/* Retake Button Action */}
+                <div className="relative z-10 p-1.5 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
+                  <button
+                    type="button"
+                    onClick={() => setRetakeIdx(i)}
+                    className="w-full py-1 px-2 rounded-lg bg-amber-400 hover:bg-amber-300 active:scale-95 text-slate-900 font-bold text-[10px] pixel flex items-center justify-center gap-1 shadow cursor-pointer transition-transform"
+                    title={`Foto ulang foto ke-${i + 1}`}
+                  >
+                    <span>↻</span> FOTO ULANG
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Retake All Button */}
+          <button
+            type="button"
+            onClick={onBack}
+            className="pixel-btn-powder w-full py-2 text-xs flex items-center justify-center gap-2 cursor-pointer hover:scale-[1.01] active:scale-95 transition-transform mt-1"
+          >
+            ← ULANG SEMUA FOTO
+          </button>
+        </div>
+
+        {/* ── RIGHT COLUMN: Pratinjau foto saat masuk bingkai (7/12 on lg) ── */}
+        <div className="lg:col-span-7 flex flex-col items-center gap-3 bg-white border-4 border-[#3A2A40] rounded-2xl p-3.5 shadow-[5px_5px_0_0_rgba(58,42,64,0.18)]">
+          <div className="w-full flex items-center justify-between border-b-2 border-slate-100 pb-2 px-1">
+            <div>
+              <h3 className="pixel text-xs sm:text-sm text-[#3A2A40] flex items-center gap-1.5">
+                <span>🖼️</span>
+                <span>PRATINJAU MASUK BINGKAI</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 font-sans">
+                Tampilan langsung saat foto dimasukkan ke dalam template
+              </p>
             </div>
 
-            {/* Hover overlay hint */}
-            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white gap-1 backdrop-blur-[2px]">
-              <span className="text-2xl">↻</span>
-              <span className="pixel text-[10px] font-bold">KLIK FOTO ULANG</span>
+            {/* Active Style Pill */}
+            <div
+              className={`px-2.5 py-1 rounded-full text-[10px] font-bold pixel flex items-center gap-1 shadow-sm ${
+                selectedAiLocal
+                  ? "bg-gradient-to-r from-indigo-500 to-pink-500 text-white"
+                  : "bg-slate-100 text-slate-800 border border-slate-200"
+              }`}
+            >
+              <span>{selectedAiLocal ? "✨" : "🎨"}</span>
+              <span className="truncate max-w-[140px]">{activeLabel}</span>
             </div>
           </div>
-        ))}
+
+          {/* Visual Composite Frame Preview */}
+          <div className="w-full flex items-center justify-center py-1">
+            <div
+              className="relative rounded-xl overflow-hidden shadow-2xl border-2 border-black/60 bg-[#121220]"
+              style={{
+                aspectRatio: overlayDimensions ? `${overlayDimensions.w} / ${overlayDimensions.h}` : "1 / 1.5",
+                maxHeight: "440px",
+                width: "auto",
+                minWidth: "220px",
+              }}
+            >
+              {/* Base Frame Image */}
+              {overlaySrc ? (
+                <img
+                  src={overlaySrc}
+                  className="absolute inset-0 w-full h-full object-fill pointer-events-none z-0"
+                  alt="Bingkai Template"
+                />
+              ) : null}
+
+              {/* Photo slots with Live CSS Filter/AI preview */}
+              {detectedHoles.map((h, i) => {
+                const photoIndex = layout === "4x2" ? Math.floor(i / 2) : i;
+                const photoSrc = photos[photoIndex];
+
+                return (
+                  <div
+                    key={i}
+                    className="absolute overflow-hidden flex items-center justify-center"
+                    style={{
+                      left: `${h.left}%`,
+                      top: `${h.top}%`,
+                      width: `${h.width}%`,
+                      height: `${h.height}%`,
+                      background: "#050508",
+                    }}
+                  >
+                    {photoSrc ? (
+                      <img
+                        src={photoSrc}
+                        className="w-full h-full object-cover transition-all duration-300"
+                        style={{
+                          filter: previewFilterCss,
+                        }}
+                        alt={`Pose ${photoIndex + 1}`}
+                      />
+                    ) : (
+                      <div className="pixel text-white/40 text-[9px]">#{photoIndex + 1}</div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Foreground Frame Overlay (for transparent stickers/borders) */}
+              {overlaySrc && hasTransparentHoles && (
+                <img
+                  src={overlaySrc}
+                  className="absolute inset-0 w-full h-full object-fill pointer-events-none z-30"
+                  alt="Bingkai Overlay"
+                />
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Action Buttons - Centered directly and symmetrically under photos */}
-      <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 w-full pt-4">
-        <button
-          onClick={onBack}
-          className="pixel-btn-powder flex items-center gap-2 cursor-pointer hover:scale-105 active:scale-95 transition-transform"
-          style={{ fontSize: "0.85rem", padding: "0.7rem 1.6rem" }}
-        >
-          ← ULANG SEMUA
-        </button>
+      {/* ── BOTTOM SECTION: Pilihan filter sama efek (Lingkaran kecil, ~10 terlihat, sisanya bergeser) ── */}
+      <div className="w-full bg-white border-4 border-[#3A2A40] rounded-2xl p-3.5 shadow-[5px_5px_0_0_rgba(58,42,64,0.18)] flex flex-col gap-2.5">
+        {/* Carousel Header & Categories */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2 px-1">
+          <div className="flex items-center gap-2">
+            <span className="pixel text-xs text-[#3A2A40] font-bold">PILIH FILTER & EFEK:</span>
+            <span className="text-[11px] font-medium text-slate-500 font-sans hidden sm:inline">
+              (Klik lingkaran untuk mengganti gaya foto)
+            </span>
+          </div>
 
-        <button
-          onClick={handleFinish}
-          disabled={isProcessing}
-          className="pixel-btn flex items-center gap-2 cursor-pointer hover:scale-105 active:scale-95 transition-transform shadow-[4px_4px_0_0_rgba(58,42,64,0.3)]"
-          style={{
-            fontSize: "0.95rem",
-            padding: "0.75rem 2rem",
-            background: "var(--color-sage)",
-            color: "#1f2937",
-          }}
+          <div className="flex items-center gap-2">
+            {/* Category Segmented Pills */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[10px] font-sans font-bold">
+              <button
+                type="button"
+                onClick={() => setFilterCategory("all")}
+                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                  filterCategory === "all" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                Semua ({1 + aiEffects.length + (activeFilters.length - 1)})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterCategory("ai")}
+                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
+                  filterCategory === "ai" ? "bg-purple-600 text-white shadow-sm" : "text-purple-700 hover:text-purple-900"
+                }`}
+              >
+                <span>✨</span> Efek AI ({aiEffects.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterCategory("color")}
+                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                  filterCategory === "color" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                🎨 Filter Warna ({activeFilters.length})
+              </button>
+            </div>
+
+            {/* Carousel Navigation Arrow Buttons */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => scrollCarousel("left")}
+                className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-bold flex items-center justify-center cursor-pointer shadow-sm text-sm"
+                title="Geser ke kiri"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollCarousel("right")}
+                className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-bold flex items-center justify-center cursor-pointer shadow-sm text-sm"
+                title="Geser ke kanan"
+              >
+                ›
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Circular Carousel: 10 circles visible on desktop, rest scroll horizontally ── */}
+        <div
+          ref={carouselRef}
+          className="flex items-center gap-3 overflow-x-auto py-2 px-1 scroll-smooth select-none scrollbar-thin"
+          style={{ scrollbarWidth: "thin" }}
         >
-          {isProcessing ? "MEMPROSES... ⏳" : "SELESAI & CETAK ➔"}
-        </button>
+          {carouselItems.map((item) => {
+            const isSelected =
+              item.type === "normal"
+                ? selectedFilterLocal === "normal" && !selectedAiLocal
+                : item.type === "ai"
+                ? selectedAiLocal === item.id
+                : selectedFilterLocal === item.id && !selectedAiLocal;
+
+            return (
+              <div
+                key={item.type + "_" + item.id}
+                onClick={() => {
+                  if (item.type === "normal") {
+                    setSelectedFilterLocal("normal");
+                    setSelectedAiLocal(null);
+                    setSelectedFilter?.("normal");
+                    setSelectedAiEffect?.(null);
+                  } else if (item.type === "ai") {
+                    setSelectedAiLocal(item.id);
+                    setSelectedFilterLocal("normal");
+                    setSelectedAiEffect?.(item.id);
+                    setSelectedFilter?.("normal");
+                  } else {
+                    setSelectedFilterLocal(item.id);
+                    setSelectedAiLocal(null);
+                    setSelectedFilter?.(item.id);
+                    setSelectedAiEffect?.(null);
+                  }
+                }}
+                className="flex flex-col items-center shrink-0 cursor-pointer group"
+                style={{ width: "66px" }}
+              >
+                {/* The Circle */}
+                <div
+                  className={`w-14 h-14 sm:w-15 sm:h-15 rounded-full relative flex items-center justify-center transition-all duration-150 ${
+                    isSelected
+                      ? item.type === "ai"
+                        ? "ring-4 ring-purple-500 ring-offset-2 scale-105 shadow-lg"
+                        : "ring-4 ring-indigo-600 ring-offset-2 scale-105 shadow-lg"
+                      : "border-2 border-slate-300 hover:border-slate-400 group-hover:scale-105"
+                  }`}
+                >
+                  {/* Normal Circle Style */}
+                  {item.type === "normal" && (
+                    <div className="w-full h-full rounded-full bg-slate-100 flex items-center justify-center text-xl text-slate-700">
+                      📷
+                    </div>
+                  )}
+
+                  {/* AI Effect Circle Style */}
+                  {item.type === "ai" && (
+                    <div className="w-full h-full rounded-full bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex flex-col items-center justify-center text-xl text-white shadow-inner relative overflow-hidden">
+                      <span className="scale-110">{item.emoji || "✨"}</span>
+                      <span className="absolute top-0.5 right-1 text-[6.5px] font-black bg-amber-400 text-black px-1 rounded-full leading-tight shadow-xs">
+                        AI
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Filter Swatch Circle Style */}
+                  {item.type === "filter" && (
+                    <div className="w-full h-full rounded-full overflow-hidden relative flex items-center justify-center bg-slate-800">
+                      <div
+                        className="w-full h-full"
+                        style={{
+                          background: "linear-gradient(135deg, #f59e0b, #ef4444, #8b5cf6)",
+                          filter: item.css || "none",
+                        }}
+                      />
+                      <span className="absolute text-white text-[11px] font-bold drop-shadow">
+                        🎨
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Selected Active Checkmark */}
+                  {isSelected && (
+                    <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-bold shadow-md">
+                      ✓
+                    </div>
+                  )}
+                </div>
+
+                {/* Circle Label */}
+                <span
+                  className={`text-[10px] truncate max-w-[64px] text-center block mt-1 tracking-tight font-sans transition-colors ${
+                    isSelected ? "font-bold text-indigo-600" : "text-slate-600 group-hover:text-slate-900"
+                  }`}
+                  title={item.name}
+                >
+                  {item.name}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Footer Row: Info + SELESAI & CETAK Button ── */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 px-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 font-sans">Gaya Terpilih:</span>
+            <span className="text-xs font-bold font-sans px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-800 border border-slate-200">
+              {activeLabel}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleFinish}
+            disabled={isProcessing}
+            className="pixel-btn flex items-center gap-2 cursor-pointer hover:scale-105 active:scale-95 transition-transform shadow-[4px_4px_0_0_rgba(58,42,64,0.3)] ml-auto"
+            style={{
+              fontSize: "0.95rem",
+              padding: "0.75rem 2.2rem",
+              background: "var(--color-sage)",
+              color: "#1f2937",
+            }}
+          >
+            {isProcessing ? "MEMPROSES BINGKAI... ⏳" : "SELESAI & CETAK ➔"}
+          </button>
+        </div>
       </div>
 
-      {/* Retake Modal */}
+      {/* Retake Camera Modal */}
       {retakeIdx !== null && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="w-full max-w-lg bg-white rounded-3xl p-6 border-4 border-[#3A2A40] shadow-2xl flex flex-col items-center gap-4">
@@ -2309,7 +2842,6 @@ function ReviewScreen({
                 className="w-full h-full object-cover"
                 style={{
                   transform: "scaleX(-1)",
-                  filter: activeFilter.css,
                 }}
               />
 
