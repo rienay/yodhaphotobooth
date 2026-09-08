@@ -27,20 +27,40 @@ export const DEFAULT_XENDIT_CONFIG: XenditConfig = {
 const settingsDb = new SettingsDB();
 
 export function getXenditConfig(): XenditConfig {
+  let envApiKey = "";
+  try {
+    if (typeof import.meta !== "undefined" && import.meta.env?.VITE_XENDIT_SECRET_KEY) {
+      envApiKey = String(import.meta.env.VITE_XENDIT_SECRET_KEY).trim();
+    }
+  } catch {}
+
+  let apiKey = envApiKey;
+  let paymentEnabled = true;
+  let price = 35000;
+
   try {
     const raw = localStorage.getItem("yodha_xendit_config");
     if (raw) {
       const parsed = JSON.parse(raw);
-      return {
-        apiKey: typeof parsed.apiKey === "string" && parsed.apiKey.trim() ? parsed.apiKey.trim() : DEFAULT_XENDIT_CONFIG.apiKey,
-        paymentEnabled: parsed.paymentEnabled !== undefined ? Boolean(parsed.paymentEnabled) : DEFAULT_XENDIT_CONFIG.paymentEnabled,
-        price: Number(parsed.price) > 0 ? Number(parsed.price) : DEFAULT_XENDIT_CONFIG.price,
-      };
+      if (typeof parsed.apiKey === "string" && parsed.apiKey.trim()) {
+        apiKey = parsed.apiKey.trim();
+      }
+      if (parsed.paymentEnabled !== undefined) {
+        paymentEnabled = Boolean(parsed.paymentEnabled);
+      }
+      if (Number(parsed.price) > 0) {
+        price = Number(parsed.price);
+      }
     }
   } catch (e) {
     console.warn("Failed to load Xendit config from localStorage:", e);
   }
-  return { ...DEFAULT_XENDIT_CONFIG };
+
+  return {
+    apiKey,
+    paymentEnabled,
+    price,
+  };
 }
 
 export async function saveXenditConfig(config: XenditConfig): Promise<void> {

@@ -5,25 +5,28 @@
 //     error logger plugins, and sandbox detection (port/host/strictPort).
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+import { loadEnv } from "vite";
+
+const loadedEnv = loadEnv(process.env.NODE_ENV || "development", process.cwd(), "");
 
 export default defineConfig({
   vite: {
     envPrefix: ["VITE_", "SUPABASE_"],
     define: {
       "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(
-        process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "https://jsbyuegfpbqnaasaqhto.supabase.co"
+        process.env.VITE_SUPABASE_URL || loadedEnv.VITE_SUPABASE_URL || "https://jsbyuegfpbqnaasaqhto.supabase.co"
       ),
       "import.meta.env.VITE_SUPABASE_ANON_KEY": JSON.stringify(
-        process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || ""
+        process.env.VITE_SUPABASE_ANON_KEY || loadedEnv.VITE_SUPABASE_ANON_KEY || ""
       ),
       "import.meta.env.SUPABASE_URL": JSON.stringify(
-        process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "https://jsbyuegfpbqnaasaqhto.supabase.co"
+        process.env.VITE_SUPABASE_URL || loadedEnv.VITE_SUPABASE_URL || "https://jsbyuegfpbqnaasaqhto.supabase.co"
       ),
       "import.meta.env.SUPABASE_ANON_KEY": JSON.stringify(
-        process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || ""
+        process.env.VITE_SUPABASE_ANON_KEY || loadedEnv.VITE_SUPABASE_ANON_KEY || ""
       ),
       "import.meta.env.VITE_XENDIT_SECRET_KEY": JSON.stringify(
-        process.env.VITE_XENDIT_SECRET_KEY || ""
+        process.env.VITE_XENDIT_SECRET_KEY || loadedEnv.VITE_XENDIT_SECRET_KEY || ""
       ),
     },
   },

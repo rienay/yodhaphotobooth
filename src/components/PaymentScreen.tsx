@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import {
   getXenditConfig,
+  saveXenditConfig,
   createDynamicQris,
   checkQrisPaymentStatus,
   simulateQrisPayment,
@@ -31,7 +32,8 @@ export const PaymentScreen: React.FC<PaymentScreenProps> = ({
   onBack,
   layoutName,
 }) => {
-  const [config] = useState(() => getXenditConfig());
+  const [config, setConfig] = useState(() => getXenditConfig());
+  const [keyInput, setKeyInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [qrData, setQrData] = useState<XenditQrCode | null>(null);
@@ -63,8 +65,17 @@ export const PaymentScreen: React.FC<PaymentScreenProps> = ({
     isPaidRef.current = false;
     setTimeLeft(15 * 60);
 
+    const currentConfig = getXenditConfig();
+    setConfig(currentConfig);
+
+    if (!currentConfig.apiKey) {
+      setLoading(false);
+      setError("API Key Xendit belum dikonfigurasi.");
+      return;
+    }
+
     const refId = generateRefId();
-    const res = await createDynamicQris(config.price, refId, config.apiKey);
+    const res = await createDynamicQris(currentConfig.price, refId, currentConfig.apiKey);
 
     if (!res.success || !res.qr) {
       setLoading(false);
@@ -255,12 +266,38 @@ export const PaymentScreen: React.FC<PaymentScreenProps> = ({
               <span className="text-xs font-semibold">Menghubungkan ke Xendit...</span>
             </div>
           ) : error ? (
-            <div className="flex flex-col items-center gap-3 text-red-600 p-4">
-              <AlertCircle className="w-10 h-10" />
+            <div className="flex flex-col items-center gap-3 text-red-600 p-4 w-full max-w-xs">
+              <AlertCircle className="w-10 h-10 shrink-0" />
               <p className="text-xs font-semibold text-center">{error}</p>
+              
+              {!config.apiKey && (
+                <div className="w-full space-y-2 pt-1">
+                  <input
+                    type="password"
+                    value={keyInput}
+                    onChange={(e) => setKeyInput(e.target.value)}
+                    placeholder="Masukkan Secret API Key"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl font-mono text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!keyInput.trim()) return;
+                      const newCfg = { ...config, apiKey: keyInput.trim() };
+                      await saveXenditConfig(newCfg);
+                      setConfig(newCfg);
+                      initQris();
+                    }}
+                    disabled={!keyInput.trim()}
+                    className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+                  >
+                    Simpan & Buat QRIS
+                  </button>
+                </div>
+              )}
+
               <button
                 onClick={initQris}
-                className="mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md transition-all cursor-pointer flex items-center gap-2"
+                className="mt-1 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 Coba Lagi
