@@ -73,6 +73,9 @@ export function getXenditConfig(): XenditConfig {
 export async function saveXenditConfig(config: XenditConfig): Promise<void> {
   try {
     localStorage.setItem("yodha_xendit_config", JSON.stringify(config));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("yodha_xendit_config_changed", { detail: config }));
+    }
     await settingsDb.saveSetting("xendit_config", config);
   } catch (e) {
     console.warn("Failed to save Xendit config:", e);

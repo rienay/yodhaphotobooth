@@ -1345,7 +1345,7 @@ export function AdminScreen({
     saveSupabaseCredentials(supabaseUrlInput.trim(), supabaseAnonKeyInput.trim());
     const configured = isSupabaseConfigured();
     setDbConfigured(configured);
-    setSupabaseSavedMsg("✅ Kredensial Supabase berhasil disimpan!");
+    setSupabaseSavedMsg("Kredensial Supabase berhasil disimpan!");
     setTimeout(() => setSupabaseSavedMsg(""), 4000);
     handleTestDB();
   };
@@ -1374,6 +1374,21 @@ export function AdminScreen({
     await saveXenditConfig(newConfig);
     setXenditConfig(newConfig);
     setXenditSavedMsg("Pengaturan pembayaran Xendit berhasil disimpan!");
+    setTimeout(() => setXenditSavedMsg(""), 3500);
+  };
+
+  const handleToggleXenditPayment = async () => {
+    const nextState = !xenditPaymentEnabled;
+    setXenditPaymentEnabled(nextState);
+    const priceNum = parseInt(xenditPriceInput.replace(/\D/g, ""), 10) || 35000;
+    const newConfig: XenditConfig = {
+      apiKey: xenditApiKeyInput.trim(),
+      paymentEnabled: nextState,
+      price: priceNum,
+    };
+    await saveXenditConfig(newConfig);
+    setXenditConfig(newConfig);
+    setXenditSavedMsg(nextState ? "Pembayaran QRIS diaktifkan (muncul di bilik foto)" : "Pembayaran QRIS dinonaktifkan (bilik foto langsung gratis)");
     setTimeout(() => setXenditSavedMsg(""), 3500);
   };
 
@@ -5164,7 +5179,7 @@ export function AdminScreen({
                     </div>
                     <button
                       type="button"
-                      onClick={() => setXenditPaymentEnabled(!xenditPaymentEnabled)}
+                      onClick={handleToggleXenditPayment}
                       className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
                         xenditPaymentEnabled ? "bg-blue-600" : "bg-slate-300"
                       }`}
