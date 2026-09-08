@@ -46,8 +46,30 @@ import {
   Volume2,
   VolumeX,
   Download,
+  Wallet,
+  TrendingUp,
+  TrendingDown,
+  ArrowDownLeft,
+  ArrowUpRight,
+  FileSpreadsheet,
+  Receipt,
+  DollarSign,
 } from "lucide-react";
 import { printPhotoStrip, PRINT_SIZES } from "../lib/printHelper";
+import {
+  FinanceDB,
+  FinanceTransaction,
+  TransactionType,
+  TransactionCategory,
+  PaymentMethod,
+  INCOME_CATEGORIES,
+  EXPENSE_CATEGORIES,
+  ALL_CATEGORIES,
+  PAYMENT_METHODS,
+  formatRupiah,
+  getCategoryInfo,
+  getPaymentMethodInfo,
+} from "../lib/finance";
 import {
   CameraFilter,
   FilterSliderSettings,
@@ -340,6 +362,7 @@ const SAMPLE_PORTRAIT_URL = "https://images.unsplash.com/photo-1534528741775-539
 
 const settingsDB = new SettingsDB();
 const sessionDB = new SessionDB();
+const financeDB = new FinanceDB();
 
 export function AdminScreen({
   templates,
@@ -349,9 +372,30 @@ export function AdminScreen({
   onLaunchBooth,
   onLogout,
 }: AdminScreenProps) {
-  const [activeNav, setActiveNav] = useState<"dashboard" | "frames" | "filters" | "ai" | "gallery" | "print" | "devices" | "settings" | "database">("dashboard");
+  const [activeNav, setActiveNav] = useState<"dashboard" | "frames" | "filters" | "ai" | "gallery" | "print" | "finance" | "devices" | "settings" | "database">("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+
+  // ── Financial / Keuangan State ──
+  const [financeTransactions, setFinanceTransactions] = useState<FinanceTransaction[]>([]);
+  const [financeLoading, setFinanceLoading] = useState(false);
+  const [showFinanceModal, setShowFinanceModal] = useState(false);
+  const [editingFinanceId, setEditingFinanceId] = useState<string | null>(null);
+  const [txType, setTxType] = useState<TransactionType>("income");
+  const [txAmount, setTxAmount] = useState<string>("");
+  const [txCategory, setTxCategory] = useState<TransactionCategory>("photo_session");
+  const [txPaymentMethod, setTxPaymentMethod] = useState<PaymentMethod>("qris");
+  const [txDescription, setTxDescription] = useState("");
+  const [txNotes, setTxNotes] = useState("");
+  const [txDate, setTxDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
+  const [txSessionCode, setTxSessionCode] = useState("");
+  const [txModalError, setTxModalError] = useState("");
+
+  // Filters for Finance Tab
+  const [financeTypeFilter, setFinanceTypeFilter] = useState<"all" | "income" | "expense">("all");
+  const [financePeriodFilter, setFinancePeriodFilter] = useState<"all" | "today" | "week" | "month">("all");
+  const [financeCategoryFilter, setFinanceCategoryFilter] = useState<string>("all");
+  const [financeSearchQuery, setFinanceSearchQuery] = useState("");
 
   // ── Print Queue & History State ──
   const [printTab, setPrintTab] = useState<"pending" | "history">("pending");
@@ -1061,6 +1105,167 @@ export function AdminScreen({
     setRecentSessions(fresh);
     setActionStatus(`🗑️ Sesi #${sess.session_code} berhasil dihapus.`);
     setTimeout(() => setActionStatus(""), 3500);
+  };
+
+  // ── Financial / Keuangan Handlers ──
+  const loadFinanceTransactions = async () => {
+    setFinanceLoading(true);
+    try {
+      const data = await financeDB.getTransactions();
+      setFinanceTransactions(data);
+    } catch (e) {
+      console.error("Gagal memuat transaksi keuangan:", e);
+    } finally {
+      setFinanceLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadFinanceTransactions();
+  }, []);
+
+  const totalIncome = financeTransactions
+    .filter((t) => t.type === "income")
+    .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+
+  const totalExpense = financeTransactions
+    .filter((t) => t.type === "expense")
+    .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+
+  const netBalance = totalIncome - totalExpense;
+
+  const todayStr = new Date().toISOString().split("T")[0];
+  const todayIncome = financeTransactions
+    .filter((t) => t.type === "income" && t.date.startsWith(todayStr))
+    .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+
+  const handleOpenAddIncomeModal = () => {
+    setEditingFinanceId(null);
+    setTxType("income");
+    setTxAmount("");
+    setTxCategory("photo_session");
+    setTxPaymentMethod("qris");
+    setTxDescription("Sesi Foto Booth");
+    setTxNotes("");
+    setTxDate(new Date().toISOString().split("T")[0]);
+    setTxSessionCode("");
+    setTxModalError("");
+    setShowFinanceModal(true);
+  };
+
+  const handleOpenAddExpenseModal = () => {
+    setEditingFinanceId(null);
+    setTxType("expense");
+    setTxAmount("");
+    setTxCategory("paper_ribbon");
+    setTxPaymentMethod("cash");
+    setTxDescription("");
+    setTxNotes("");
+    setTxDate(new Date().toISOString().split("T")[0]);
+    setTxSessionCode("");
+    setTxModalError("");
+    setShowFinanceModal(true);
+  };
+
+  const handleOpenEditFinanceModal = (tx: FinanceTransaction) => {
+    setEditingFinanceId(tx.id);
+    setTxType(tx.type);
+    setTxAmount(tx.amount.toString());
+    setTxCategory(tx.category);
+    setTxPaymentMethod(tx.paymentMethod);
+    setTxDescription(tx.description);
+    setTxNotes(tx.notes || "");
+    setTxDate(tx.date || new Date().toISOString().split("T")[0]);
+    setTxSessionCode(tx.sessionCode || "");
+    setTxModalError("");
+    setShowFinanceModal(true);
+  };
+
+  const handleSaveFinanceModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsedAmount = parseFloat(txAmount.replace(/[^0-9]/g, ""));
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      setTxModalError("Nominal transaksi harus berupa angka lebih dari 0!");
+      return;
+    }
+    if (!txDescription.trim()) {
+      setTxModalError("Keterangan transaksi tidak boleh kosong!");
+      return;
+    }
+
+    try {
+      if (editingFinanceId) {
+        await financeDB.updateTransaction(editingFinanceId, {
+          type: txType,
+          amount: parsedAmount,
+          category: txCategory,
+          paymentMethod: txPaymentMethod,
+          description: txDescription.trim(),
+          notes: txNotes.trim(),
+          date: txDate,
+          sessionCode: txSessionCode.trim() || undefined,
+        });
+        setActionStatus(`✅ Transaksi berhasil diperbarui.`);
+      } else {
+        await financeDB.saveTransaction({
+          type: txType,
+          amount: parsedAmount,
+          category: txCategory,
+          paymentMethod: txPaymentMethod,
+          description: txDescription.trim(),
+          notes: txNotes.trim(),
+          date: txDate,
+          sessionCode: txSessionCode.trim() || undefined,
+        });
+        setActionStatus(`✅ ${txType === "income" ? "Pemasukan" : "Pengeluaran"} sebesar ${formatRupiah(parsedAmount)} berhasil dicatat.`);
+      }
+      setShowFinanceModal(false);
+      await loadFinanceTransactions();
+      setTimeout(() => setActionStatus(""), 3500);
+    } catch (err) {
+      console.error(err);
+      setTxModalError("Gagal menyimpan transaksi keuangan.");
+    }
+  };
+
+  const handleDeleteFinanceTransaction = async (id: string) => {
+    if (!window.confirm("Hapus catatan transaksi keuangan ini?")) return;
+    try {
+      await financeDB.deleteTransaction(id);
+      await loadFinanceTransactions();
+      setActionStatus("🗑️ Transaksi keuangan berhasil dihapus.");
+      setTimeout(() => setActionStatus(""), 3500);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleExportFinanceCSV = () => {
+    if (financeTransactions.length === 0) {
+      alert("Belum ada data transaksi keuangan untuk diekspor.");
+      return;
+    }
+    const headers = ["ID", "Tanggal", "Tipe", "Kategori", "Keterangan", "Metode Pembayaran", "Nominal (Rp)", "Kode Sesi", "Catatan"];
+    const rows = financeTransactions.map((t) => [
+      t.id,
+      t.date,
+      t.type === "income" ? "Pemasukan" : "Pengeluaran",
+      getCategoryInfo(t.category).label,
+      `"${(t.description || "").replace(/"/g, '""')}"`,
+      getPaymentMethodInfo(t.paymentMethod).label,
+      t.amount,
+      t.sessionCode || "-",
+      `"${(t.notes || "").replace(/"/g, '""')}"`,
+    ]);
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `laporan-keuangan-yodhabooth-${new Date().toISOString().split("T")[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // Camera preview in Devices tab
@@ -2266,6 +2471,28 @@ export function AdminScreen({
                 </div>
               )}
             </button>
+
+            <button
+              onClick={() => setActiveNav("finance")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                activeNav === "finance"
+                  ? "bg-emerald-50 text-emerald-800 font-bold shadow-xs border border-emerald-200"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              } ${sidebarCollapsed ? "justify-center" : ""}`}
+              title="Pencatatan Keuangan, Pemasukan & Pengeluaran"
+            >
+              <Wallet className="w-4 h-4 shrink-0 text-emerald-600" />
+              {!sidebarCollapsed && (
+                <div className="flex items-center justify-between w-full">
+                  <span>Keuangan & Kas</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                    netBalance >= 0 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-700"
+                  }`}>
+                    {formatRupiah(netBalance)}
+                  </span>
+                </div>
+              )}
+            </button>
           </div>
 
           {/* Group 2: PENGELOLAAN BOOTH */}
@@ -2547,6 +2774,60 @@ export function AdminScreen({
                   <div className="w-12 h-12 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center">
                     <Camera className="w-6 h-6" />
                   </div>
+                </div>
+              </div>
+
+              {/* Finance Quick Summary Bar */}
+              <div className="bg-white rounded-2xl border border-emerald-200 p-5 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-gradient-to-r from-emerald-50/60 via-white to-teal-50/40">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/20 shrink-0">
+                    <Wallet className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">Saldo Kas & Keuangan</span>
+                      <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
+                        {financeTransactions.length} Transaksi
+                      </span>
+                    </div>
+                    <div className="flex items-baseline gap-3 mt-0.5 flex-wrap">
+                      <h3 className="text-2xl font-black text-slate-900">{formatRupiah(netBalance)}</h3>
+                      <div className="flex items-center gap-2 text-xs font-medium">
+                        <span className="text-emerald-600 font-bold">Masuk: +{formatRupiah(totalIncome)}</span>
+                        <span className="text-slate-300">•</span>
+                        <span className="text-rose-600 font-bold">Keluar: -{formatRupiah(totalExpense)}</span>
+                        <span className="text-slate-300">•</span>
+                        <span className="text-amber-700 font-bold">Hari Ini: +{formatRupiah(todayIncome)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleOpenAddIncomeModal}
+                    className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <ArrowDownLeft className="w-3.5 h-3.5" />
+                    <span>+ Pemasukan</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenAddExpenseModal}
+                    className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                    <span>- Pengeluaran</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveNav("finance")}
+                    className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center gap-1"
+                  >
+                    <span>Buku Kas</span>
+                    <span>→</span>
+                  </button>
                 </div>
               </div>
 
@@ -3961,6 +4242,689 @@ export function AdminScreen({
                     <span>🖨️ Cetak Foto Ini Sekarang</span>
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ──────────────── TAB: KEUANGAN & ARUS KAS (FINANCE) ──────────────── */}
+          {activeNav === "finance" && (
+            <div className="space-y-6 max-w-7xl mx-auto">
+              {/* Header Bar */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                      <span>Catatan Keuangan & Kas</span>
+                      <span className="text-xl">💰</span>
+                    </h2>
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                      netBalance >= 0 ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-700"
+                    }`}>
+                      <Wallet className="w-3.5 h-3.5" />
+                      <span>Saldo Bersih: {formatRupiah(netBalance)}</span>
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Pencatatan uang masuk (sesi foto, cetak tambahan, sewa event) & pengeluaran operasional (kertas, tinta, sewa, properti).
+                  </p>
+                </div>
+
+                {/* Header Action Buttons */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleOpenAddIncomeModal}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition-all cursor-pointer active:scale-95"
+                  >
+                    <ArrowDownLeft className="w-4 h-4" />
+                    <span>+ Catat Pemasukan</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleOpenAddExpenseModal}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white text-xs font-bold shadow-md shadow-red-600/20 transition-all cursor-pointer active:scale-95"
+                  >
+                    <ArrowUpRight className="w-4 h-4" />
+                    <span>- Catat Pengeluaran</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleExportFinanceCSV}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-all cursor-pointer shadow-xs"
+                    title="Unduh laporan transaksi dalam format file CSV / Excel"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                    <span>Ekspor CSV</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={loadFinanceTransactions}
+                    disabled={financeLoading}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-all cursor-pointer shadow-xs"
+                    title="Segarkan data keuangan"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${financeLoading ? "animate-spin text-blue-600" : ""}`} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Stat Summary Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Total Pemasukan */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs relative overflow-hidden">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Pemasukan</span>
+                    <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                      <TrendingUp className="w-5 h-5" />
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <h3 className="text-2xl font-black text-emerald-600 tracking-tight">
+                      {formatRupiah(totalIncome)}
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      {financeTransactions.filter((t) => t.type === "income").length} transaksi pemasukan tercatat
+                    </p>
+                  </div>
+                  <div className="absolute bottom-0 left-0 right-0 h-1 bg-emerald-500" />
+                </div>
+
+                {/* Total Pengeluaran */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs relative overflow-hidden">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Pengeluaran</span>
+                    <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                      <TrendingDown className="w-5 h-5" />
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <h3 className="text-2xl font-black text-rose-600 tracking-tight">
+                      {formatRupiah(totalExpense)}
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      {financeTransactions.filter((t) => t.type === "expense").length} pengeluaran operasional
+                    </p>
+                  </div>
+                  <div className="absolute bottom-0 left-0 right-0 h-1 bg-rose-500" />
+                </div>
+
+                {/* Saldo Bersih / Kas */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs relative overflow-hidden">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Laba Bersih / Saldo Kas</span>
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                      netBalance >= 0 ? "bg-blue-50 text-blue-600" : "bg-amber-50 text-amber-600"
+                    }`}>
+                      <Wallet className="w-5 h-5" />
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <h3 className={`text-2xl font-black tracking-tight ${
+                      netBalance >= 0 ? "text-slate-900" : "text-amber-600"
+                    }`}>
+                      {formatRupiah(netBalance)}
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      {netBalance >= 0 ? "Profit surplus operasional" : "Defisit operasional"}
+                    </p>
+                  </div>
+                  <div className={`absolute bottom-0 left-0 right-0 h-1 ${
+                    netBalance >= 0 ? "bg-blue-600" : "bg-amber-500"
+                  }`} />
+                </div>
+
+                {/* Pemasukan Hari Ini */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs relative overflow-hidden">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Pemasukan Hari Ini</span>
+                    <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+                      <Receipt className="w-5 h-5" />
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <h3 className="text-2xl font-black text-amber-600 tracking-tight">
+                      {formatRupiah(todayIncome)}
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      {financeTransactions.filter((t) => t.type === "income" && t.date.startsWith(todayStr)).length} transaksi hari ini
+                    </p>
+                  </div>
+                  <div className="absolute bottom-0 left-0 right-0 h-1 bg-amber-500" />
+                </div>
+              </div>
+
+              {/* Filter & Search Bar */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs space-y-3">
+                <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+                  {/* Segmented Type Filter */}
+                  <div className="inline-flex p-1 bg-slate-100 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setFinanceTypeFilter("all")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        financeTypeFilter === "all" ? "bg-white text-slate-900 shadow-xs" : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      Semua ({financeTransactions.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFinanceTypeFilter("income")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                        financeTypeFilter === "income" ? "bg-emerald-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <span>🟢 Pemasukan</span>
+                      <span className="text-[10px] opacity-80">({financeTransactions.filter((t) => t.type === "income").length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFinanceTypeFilter("expense")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                        financeTypeFilter === "expense" ? "bg-rose-600 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <span>🔴 Pengeluaran</span>
+                      <span className="text-[10px] opacity-80">({financeTransactions.filter((t) => t.type === "expense").length})</span>
+                    </button>
+                  </div>
+
+                  {/* Period & Category Filter */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-slate-400 font-medium">Periode:</span>
+                    <select
+                      value={financePeriodFilter}
+                      onChange={(e) => setFinancePeriodFilter(e.target.value as any)}
+                      className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                    >
+                      <option value="all">Semua Waktu</option>
+                      <option value="today">Hari Ini</option>
+                      <option value="week">7 Hari Terakhir</option>
+                      <option value="month">30 Hari Terakhir</option>
+                    </select>
+
+                    <span className="text-xs text-slate-400 font-medium ml-1">Kategori:</span>
+                    <select
+                      value={financeCategoryFilter}
+                      onChange={(e) => setFinanceCategoryFilter(e.target.value)}
+                      className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                    >
+                      <option value="all">Semua Kategori</option>
+                      <optgroup label="Pemasukan">
+                        {INCOME_CATEGORIES.map((c) => (
+                          <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Pengeluaran">
+                        {EXPENSE_CATEGORIES.map((c) => (
+                          <option key={c.id} value={c.id}>{c.emoji} {c.label}</option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Search Bar */}
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Cari transaksi berdasarkan keterangan, catatan, atau kode sesi..."
+                    value={financeSearchQuery}
+                    onChange={(e) => setFinanceSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
+                  />
+                  {financeSearchQuery && (
+                    <button
+                      onClick={() => setFinanceSearchQuery("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Transactions Table */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                {(() => {
+                  const now = new Date();
+                  const filtered = financeTransactions.filter((tx) => {
+                    if (financeTypeFilter !== "all" && tx.type !== financeTypeFilter) return false;
+                    if (financeCategoryFilter !== "all" && tx.category !== financeCategoryFilter) return false;
+                    if (financePeriodFilter === "today") {
+                      if (!tx.date.startsWith(todayStr)) return false;
+                    } else if (financePeriodFilter === "week") {
+                      const txD = new Date(tx.date);
+                      const diffDays = (now.getTime() - txD.getTime()) / (1000 * 3600 * 24);
+                      if (diffDays > 7) return false;
+                    } else if (financePeriodFilter === "month") {
+                      const txD = new Date(tx.date);
+                      const diffDays = (now.getTime() - txD.getTime()) / (1000 * 3600 * 24);
+                      if (diffDays > 30) return false;
+                    }
+                    if (financeSearchQuery.trim()) {
+                      const q = financeSearchQuery.toLowerCase();
+                      const matchDesc = (tx.description || "").toLowerCase().includes(q);
+                      const matchNotes = (tx.notes || "").toLowerCase().includes(q);
+                      const matchCode = (tx.sessionCode || "").toLowerCase().includes(q);
+                      const matchCat = getCategoryInfo(tx.category).label.toLowerCase().includes(q);
+                      if (!matchDesc && !matchNotes && !matchCode && !matchCat) return false;
+                    }
+                    return true;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="p-12 text-center flex flex-col items-center justify-center gap-3">
+                        <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl">
+                          💰
+                        </div>
+                        <h4 className="font-bold text-slate-800 text-sm">Belum Ada Transaksi Keuangan</h4>
+                        <p className="text-xs text-slate-500 max-w-sm">
+                          {financeTransactions.length === 0
+                            ? "Catat pemasukan kas dari sesi photobooth atau pengeluaran operasional dengan tombol di atas."
+                            : "Tidak ada transaksi yang cocok dengan filter atau pencarian saat ini."}
+                        </p>
+                        {financeTransactions.length === 0 && (
+                          <div className="flex gap-2 mt-2">
+                            <button
+                              type="button"
+                              onClick={handleOpenAddIncomeModal}
+                              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer"
+                            >
+                              + Catat Pemasukan Pertama
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleOpenAddExpenseModal}
+                              className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all cursor-pointer"
+                            >
+                              - Catat Pengeluaran
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  const filteredIncome = filtered.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0);
+                  const filteredExpense = filtered.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+                  const filteredNet = filteredIncome - filteredExpense;
+
+                  return (
+                    <div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                              <th className="py-3 px-4">Tanggal & Waktu</th>
+                              <th className="py-3 px-4">Tipe & Kategori</th>
+                              <th className="py-3 px-4">Keterangan</th>
+                              <th className="py-3 px-4">Metode Bayar</th>
+                              <th className="py-3 px-4 text-right">Nominal</th>
+                              <th className="py-3 px-4 text-center">Aksi</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {filtered.map((tx) => {
+                              const catInfo = getCategoryInfo(tx.category);
+                              const payInfo = getPaymentMethodInfo(tx.paymentMethod);
+                              const isInc = tx.type === "income";
+
+                              return (
+                                <tr key={tx.id} className="hover:bg-slate-50/80 transition-colors">
+                                  {/* Tanggal */}
+                                  <td className="py-3 px-4 whitespace-nowrap text-slate-600">
+                                    <div className="font-semibold text-slate-800">
+                                      {new Date(tx.date).toLocaleDateString("id-ID", {
+                                        weekday: "short",
+                                        day: "numeric",
+                                        month: "short",
+                                        year: "numeric",
+                                      })}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400">
+                                      {new Date(tx.createdAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                                    </div>
+                                  </td>
+
+                                  {/* Tipe & Kategori */}
+                                  <td className="py-3 px-4 whitespace-nowrap">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                                        isInc ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                                      }`}>
+                                        <span>{catInfo.emoji}</span>
+                                        <span>{catInfo.label}</span>
+                                      </span>
+                                    </div>
+                                  </td>
+
+                                  {/* Keterangan & Catatan */}
+                                  <td className="py-3 px-4">
+                                    <div className="font-semibold text-slate-800 flex items-center gap-2 flex-wrap">
+                                      <span>{tx.description}</span>
+                                      {tx.sessionCode && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-mono font-bold">
+                                          #{tx.sessionCode}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {tx.notes && (
+                                      <p className="text-[11px] text-slate-400 italic mt-0.5 max-w-md truncate">
+                                        {tx.notes}
+                                      </p>
+                                    )}
+                                  </td>
+
+                                  {/* Metode Pembayaran */}
+                                  <td className="py-3 px-4 whitespace-nowrap text-slate-700">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-[11px] font-medium">
+                                      <span>{payInfo.emoji}</span>
+                                      <span>{payInfo.label}</span>
+                                    </span>
+                                  </td>
+
+                                  {/* Nominal */}
+                                  <td className="py-3 px-4 whitespace-nowrap text-right">
+                                    <span className={`font-black text-sm ${
+                                      isInc ? "text-emerald-600" : "text-rose-600"
+                                    }`}>
+                                      {isInc ? "+" : "-"} {formatRupiah(tx.amount)}
+                                    </span>
+                                  </td>
+
+                                  {/* Aksi */}
+                                  <td className="py-3 px-4 whitespace-nowrap text-center">
+                                    <div className="inline-flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEditFinanceModal(tx)}
+                                        className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                                        title="Edit Transaksi"
+                                      >
+                                        <Pencil className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteFinanceTransaction(tx.id)}
+                                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                        title="Hapus Transaksi"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Table Footer Summary */}
+                      <div className="bg-slate-50/80 px-4 py-3 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-600">
+                        <div>
+                          Menampilkan <span className="font-bold text-slate-900">{filtered.length}</span> dari{" "}
+                          <span className="font-bold text-slate-900">{financeTransactions.length}</span> transaksi
+                        </div>
+                        <div className="flex items-center gap-4 text-xs">
+                          <span>
+                            Masuk: <strong className="text-emerald-600">+{formatRupiah(filteredIncome)}</strong>
+                          </span>
+                          <span>
+                            Keluar: <strong className="text-rose-600">-{formatRupiah(filteredExpense)}</strong>
+                          </span>
+                          <span className="font-bold">
+                            Net: <span className={filteredNet >= 0 ? "text-emerald-700" : "text-rose-700"}>{formatRupiah(filteredNet)}</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
+          {/* ──────────────── MODAL INPUT / EDIT KEUANGAN ──────────────── */}
+          {showFinanceModal && (
+            <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in overflow-y-auto">
+              <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border-4 border-slate-900 flex flex-col gap-4 my-8">
+                {/* Modal Header */}
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-white font-bold ${
+                      txType === "income" ? "bg-emerald-600" : "bg-rose-600"
+                    }`}>
+                      {txType === "income" ? <ArrowDownLeft className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-base">
+                        {editingFinanceId
+                          ? "Edit Catatan Keuangan"
+                          : txType === "income"
+                          ? "Catat Pemasukan Kas Baru"
+                          : "Catat Pengeluaran Kas Baru"}
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        {txType === "income" ? "Penerimaan uang masuk ke kas Yodha" : "Biaya dan pengeluaran operasional kas"}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowFinanceModal(false)}
+                    className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center font-bold text-sm cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Form */}
+                <form onSubmit={handleSaveFinanceModal} className="space-y-4">
+                  {/* Type Selector (if adding new) */}
+                  <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-2xl">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTxType("income");
+                        if (!editingFinanceId) {
+                          setTxCategory("photo_session");
+                          setTxDescription("Sesi Foto Booth");
+                        }
+                      }}
+                      className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                        txType === "income"
+                          ? "bg-emerald-600 text-white shadow-sm"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <ArrowDownLeft className="w-4 h-4" />
+                      <span>🟢 Pemasukan</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTxType("expense");
+                        if (!editingFinanceId) {
+                          setTxCategory("paper_ribbon");
+                          setTxDescription("Beli Kertas Foto / Ribbon");
+                        }
+                      }}
+                      className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                        txType === "expense"
+                          ? "bg-rose-600 text-white shadow-sm"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <ArrowUpRight className="w-4 h-4" />
+                      <span>🔴 Pengeluaran</span>
+                    </button>
+                  </div>
+
+                  {/* Nominal Input */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Nominal Transaksi (Rp) <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">Rp</span>
+                      <input
+                        type="number"
+                        min="1"
+                        placeholder="Contoh: 35000"
+                        value={txAmount}
+                        onChange={(e) => setTxAmount(e.target.value)}
+                        className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        required
+                      />
+                    </div>
+                    {/* Quick Amount Buttons */}
+                    <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                      <span className="text-[10px] text-slate-400">Pilihan Cepat:</span>
+                      {(txType === "income"
+                        ? [25000, 35000, 50000, 100000, 1500000]
+                        : [20000, 50000, 100000, 250000, 500000]
+                      ).map((val) => (
+                        <button
+                          key={val}
+                          type="button"
+                          onClick={() => setTxAmount(val.toString())}
+                          className="px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-semibold transition-colors cursor-pointer"
+                        >
+                          {val >= 1000000 ? `${val / 1000000}jt` : `${val / 1000}rb`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Kategori & Metode Bayar Row */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Kategori */}
+                    <div className="space-y-1">
+                      <label className="block text-xs font-bold text-slate-700">Kategori</label>
+                      <select
+                        value={txCategory}
+                        onChange={(e) => setTxCategory(e.target.value as TransactionCategory)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                      >
+                        {(txType === "income" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).map((cat) => (
+                          <option key={cat.id} value={cat.id}>
+                            {cat.emoji} {cat.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Metode Bayar */}
+                    <div className="space-y-1">
+                      <label className="block text-xs font-bold text-slate-700">Metode Pembayaran</label>
+                      <select
+                        value={txPaymentMethod}
+                        onChange={(e) => setTxPaymentMethod(e.target.value as PaymentMethod)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                      >
+                        {PAYMENT_METHODS.map((method) => (
+                          <option key={method.id} value={method.id}>
+                            {method.emoji} {method.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Keterangan / Deskripsi */}
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Keterangan / Uraian <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={txType === "income" ? "Contoh: Sesi Foto Strip 2 Lembar" : "Contoh: Beli Kertas Foto & Ribbon"}
+                      value={txDescription}
+                      onChange={(e) => setTxDescription(e.target.value)}
+                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      required
+                    />
+                  </div>
+
+                  {/* Tanggal & Kode Sesi (Opsional) Row */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Tanggal Transaksi */}
+                    <div className="space-y-1">
+                      <label className="block text-xs font-bold text-slate-700">Tanggal Transaksi</label>
+                      <input
+                        type="date"
+                        value={txDate}
+                        onChange={(e) => setTxDate(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                        required
+                      />
+                    </div>
+
+                    {/* Kode Sesi Foto (Opsional) */}
+                    <div className="space-y-1">
+                      <label className="block text-xs font-bold text-slate-700">
+                        Kode Sesi Foto <span className="text-slate-400 font-normal">(Opsional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Contoh: 1234 atau YD-8912"
+                        value={txSessionCode}
+                        onChange={(e) => setTxSessionCode(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Catatan Tambahan (Opsional) */}
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Catatan Tambahan <span className="text-slate-400 font-normal">(Opsional)</span>
+                    </label>
+                    <textarea
+                      rows={2}
+                      placeholder="Nomor invoice/resi, nama vendor, nama pelanggan, keterangan lainnya..."
+                      value={txNotes}
+                      onChange={(e) => setTxNotes(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none"
+                    />
+                  </div>
+
+                  {/* Error Alert */}
+                  {txModalError && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-center gap-2">
+                      <span>⚠️</span>
+                      <span>{txModalError}</span>
+                    </div>
+                  )}
+
+                  {/* Modal Action Buttons */}
+                  <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowFinanceModal(false)}
+                      className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="submit"
+                      className={`px-6 py-2.5 rounded-xl text-white text-xs font-bold shadow-md transition-all cursor-pointer active:scale-95 flex items-center gap-2 ${
+                        txType === "income"
+                          ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20"
+                          : "bg-rose-600 hover:bg-rose-700 shadow-rose-600/20"
+                      }`}
+                    >
+                      <span>💾 Simpan Transaksi</span>
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
           )}
