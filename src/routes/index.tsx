@@ -483,10 +483,8 @@ function Photobooth() {
         )}
         {screen === "frame" && (
           <FrameScreen
-            frame={frame}
-            setFrame={setFrame}
-            layout={layout}
-            setLayout={setLayout}
+            selectedLayout={layout}
+            setSelectedLayout={setLayout}
             variant={variant}
             setVariant={setVariant}
             onBack={() => setScreen("home")}
