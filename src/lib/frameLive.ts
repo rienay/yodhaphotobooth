@@ -1,5 +1,6 @@
 // @ts-ignore
-import { GIFEncoder, quantize, applyPalette } from "gifenc";
+import gifencPkg from "gifenc";
+const { GIFEncoder, quantize, applyPalette } = gifencPkg;
 import {
   Input,
   Output,
