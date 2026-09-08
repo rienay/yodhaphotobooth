@@ -426,7 +426,7 @@ export async function composeLiveGifFrame(
   templateImgSrc: string,
   videoUrls: string[],
   layout: string,
-  maxDimension = 420,
+  maxDimension = 960, // HD Quality
   fps = 8,
   repeats = 2,
   customBoxes?: { id?: string; x: number; y: number; w: number; h: number }[]
@@ -448,13 +448,33 @@ export async function composeLiveGifFrame(
       h: Math.round((box.h / 100) * origH),
     }));
   } else {
-    holes = detectHolesFromImage(frameImg);
-    if (holes.length === 0) {
+    // Standard layout defaults
+    if (layout === "4x2") {
+      const topMargin = origH * 0.08;
+      const bottomMargin = origH * 0.12;
+      const leftMargin = origW * 0.05;
+      const holeW = origW * 0.42;
+      const holeH = (origH - topMargin - bottomMargin) / 4;
+      for (let r = 0; r < 4; r++) {
+        holes.push({
+          x: Math.round(leftMargin),
+          y: Math.round(topMargin + r * holeH),
+          w: Math.round(holeW),
+          h: Math.round(holeH * 0.92),
+        });
+        holes.push({
+          x: Math.round(origW - leftMargin - holeW),
+          y: Math.round(topMargin + r * holeH),
+          w: Math.round(holeW),
+          h: Math.round(holeH * 0.92),
+        });
+      }
+    } else {
       holes = [
         {
-          x: Math.round(origW * 0.1),
-          y: Math.round(origH * 0.1),
-          w: Math.round(origW * 0.8),
+          x: Math.round(origW * 0.05),
+          y: Math.round(origH * 0.05),
+          w: Math.round(origW * 0.9),
           h: Math.round(origH * 0.8),
         },
       ];
@@ -509,6 +529,8 @@ export async function composeLiveGifFrame(
   canvas.height = targetH;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("Could not create canvas context");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
 
   const totalCycleFrames = Math.round(5 * fps); // 40 frames for 5s
   const frameIntervalMs = Math.round(1000 / fps); // ~125ms
@@ -563,8 +585,8 @@ export async function composeLiveGifFrame(
   // Encode with gifenc, repeated 4 times => exactly 12 seconds!
   const gif = GIFEncoder();
   const processed = capturedFrames.map((imgData) => {
-    const palette = quantize(imgData.data, 256);
-    const index = applyPalette(imgData.data, palette);
+    const palette = quantize(imgData.data, 256, { format: "rgb565" });
+    const index = applyPalette(imgData.data, palette, "rgb565");
     return { index, palette };
   });
 
@@ -595,7 +617,7 @@ export async function composeLiveGifFrame(
  */
 export async function generate12sGifFromVideo(
   videoSrc: string,
-  maxDimension = 480,
+  maxDimension = 960, // HD Quality
   fps = 8,
   repeats = 2
 ): Promise<string> {
@@ -639,6 +661,8 @@ export async function generate12sGifFromVideo(
   canvas.height = height;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("Could not create canvas context");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
 
   const totalCycleFrames = Math.round(5 * fps); // 40 frames for 5s
   const frameIntervalMs = Math.round(1000 / fps); // 125ms
@@ -661,8 +685,8 @@ export async function generate12sGifFromVideo(
 
   const gif = GIFEncoder();
   const processed = capturedFrames.map((imgData) => {
-    const palette = quantize(imgData.data, 256);
-    const index = applyPalette(imgData.data, palette);
+    const palette = quantize(imgData.data, 256, { format: "rgb565" });
+    const index = applyPalette(imgData.data, palette, "rgb565");
     return { index, palette };
   });
 

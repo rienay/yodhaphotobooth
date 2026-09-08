@@ -17,7 +17,7 @@ function loadImg(src: string): Promise<HTMLImageElement> {
  */
 export async function generateGifFromPhotos(
   photos: string[],
-  maxDimension = 960, // HD Quality
+  maxDimension = 1280, // True HD Quality (1280x720 / 1280x960)
   delay = 500,
   targetDurationMs = 12000 // 12 seconds total duration
 ): Promise<string> {
@@ -51,6 +51,8 @@ export async function generateGifFromPhotos(
   canvas.height = height;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("Canvas context could not be created");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
 
   // Pre-process each photo frame once
   const processedFrames = [];
@@ -58,12 +60,12 @@ export async function generateGifFromPhotos(
     const img = i === 0 ? firstImg : await loadImg(photos[i]);
     ctx.clearRect(0, 0, width, height);
 
-    // Draw image exactly matching camera aspect ratio
+    // Draw image exactly matching camera aspect ratio with high quality bicubic interpolation
     ctx.drawImage(img, 0, 0, width, height);
 
     const imgData = ctx.getImageData(0, 0, width, height);
-    const palette = quantize(imgData.data, 256);
-    const index = applyPalette(imgData.data, palette);
+    const palette = quantize(imgData.data, 256, { format: "rgb565" });
+    const index = applyPalette(imgData.data, palette, "rgb565");
     processedFrames.push({ index, palette });
   }
 

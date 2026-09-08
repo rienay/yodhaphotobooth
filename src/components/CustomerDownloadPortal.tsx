@@ -506,8 +506,28 @@ export function CustomerDownloadPortal({
                       className="w-full py-3 px-4 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold shadow-md shadow-purple-600/25 flex items-center justify-center gap-2 transition-all cursor-pointer"
                     >
                       <Download className="w-4 h-4" />
-                      <span>Unduh Animasi GIF (.gif)</span>
+                      <span>Unduh Animasi GIF HD (.gif)</span>
                     </button>
+                    {rawPhotos.length > 0 && (
+                      <button
+                        onClick={async () => {
+                          setIsGeneratingGif(true);
+                          try {
+                            const generated = await generateGifFromPhotos(rawPhotos, 1280, 500, 12000);
+                            if (generated) setGifUrl(generated);
+                          } catch (e) {
+                            console.error(e);
+                          } finally {
+                            setIsGeneratingGif(false);
+                          }
+                        }}
+                        disabled={isGeneratingGif}
+                        className="w-full py-2 px-4 bg-purple-950/40 hover:bg-purple-900/50 text-purple-300 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all border border-purple-500/30 cursor-pointer"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-purple-300" />
+                        <span>{isGeneratingGif ? "Sedang Merender Ulang HD..." : "Tingkatkan ke Kualitas HD (1280p)"}</span>
+                      </button>
+                    )}
                     <a
                       href={(gifUrl || session.gif_url)!}
                       target="_blank"
@@ -522,21 +542,21 @@ export function CustomerDownloadPortal({
               ) : isGeneratingGif ? (
                 <div className="py-16 text-center space-y-3 text-slate-400">
                   <div className="w-10 h-10 border-3 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                  <p className="text-xs font-semibold text-slate-200">Sedang merender animasi GIF 12 detik...</p>
-                  <p className="text-[10px] text-slate-500">Menggabungkan seluruh pose foto dengan rasio asli kamera</p>
+                  <p className="text-xs font-semibold text-slate-200">Sedang merender animasi GIF HD 12 detik...</p>
+                  <p className="text-[10px] text-slate-500">Menggabungkan seluruh pose foto dengan resolusi HD dan rasio asli kamera</p>
                 </div>
               ) : rawPhotos.length > 0 ? (
                 <div className="py-12 text-center space-y-3 text-slate-400">
                   <Film className="w-12 h-12 mx-auto text-purple-400 opacity-80" />
                   <p className="text-xs font-semibold text-slate-200">Animasi GIF sedang diproses booth</p>
                   <p className="text-[10px] text-slate-400 max-w-xs mx-auto">
-                    Kamu juga bisa membuat animasi GIF 12 detik langsung di HP sekarang:
+                    Kamu juga bisa membuat animasi GIF HD 12 detik langsung di HP sekarang:
                   </p>
                   <button
                     onClick={async () => {
                       setIsGeneratingGif(true);
                       try {
-                        const generated = await generateGifFromPhotos(rawPhotos, 640, 500, 12000);
+                        const generated = await generateGifFromPhotos(rawPhotos, 1280, 500, 12000);
                         if (generated) setGifUrl(generated);
                       } catch (e) {
                         console.error(e);
@@ -547,7 +567,7 @@ export function CustomerDownloadPortal({
                     className="mt-2 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md shadow-purple-600/30 inline-flex items-center gap-2 cursor-pointer transition-all"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-purple-200" />
-                    <span>Buat GIF 12 Detik Sekarang</span>
+                    <span>Buat GIF HD 12 Detik Sekarang</span>
                   </button>
                 </div>
               ) : (
@@ -832,16 +852,16 @@ function FramedLiveView({
   const handleDownloadFramedGif = async () => {
     if (isComposingGif) return;
     setIsComposingGif(true);
-    setDownloadProgress("Menyiapkan GIF 12 detik (4x loop)...");
+    setDownloadProgress("Menyiapkan GIF HD 12 detik...");
     try {
       const targetTemplate = session.template_url || session.strip_url;
       const gifDataUrl = await composeLiveGifFrame(
         targetTemplate,
         liveVideos,
         session.layout || "4x2",
-        420,
+        960,
         8,
-        4 // 3s x 4 repeats = 12 seconds!
+        3 // 4s x 3 repeats = 12 seconds
       );
       if (gifDataUrl) {
         await triggerDownload(gifDataUrl, `${session.session_code}_live_12s_loop.gif`);
@@ -862,7 +882,7 @@ function FramedLiveView({
     if (singleGifLoadingIdx !== null) return;
     setSingleGifLoadingIdx(idx);
     try {
-      const gifDataUrl = await generate12sGifFromVideo(vUrl, 440, 8, 4);
+      const gifDataUrl = await generate12sGifFromVideo(vUrl, 960, 8, 3);
       if (gifDataUrl) {
         await triggerDownload(gifDataUrl, `${session.session_code}_pose_${idx + 1}_12s.gif`);
       }
