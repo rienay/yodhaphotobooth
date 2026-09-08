@@ -14,6 +14,13 @@ import {
   verifyAndLoginAdmin,
 } from "@/lib/auth";
 import { CameraFilter, DEFAULT_PHOTO_FILTERS, loadLocalFilters } from "@/lib/filters";
+import {
+  AiEffect,
+  DEFAULT_AI_EFFECTS,
+  loadLocalAiEffects,
+  applyAiShaderToContext,
+  getAiPreviewCss,
+} from "@/lib/aiEffects";
 import yodhaLogo from "@/assets/yodha.png";
 import arthanaLogo from "@/assets/arthana.png";
 import gachaAsset from "@/assets/GACHA MACHINE.png";
@@ -243,6 +250,8 @@ function Photobooth() {
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(isBoothMode);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [cameraFilters, setCameraFilters] = useState<CameraFilter[]>(() => loadLocalFilters());
+  const [aiEffects, setAiEffects] = useState<AiEffect[]>(() => loadLocalAiEffects());
+  const [selectedAiEffect, setSelectedAiEffect] = useState<string | null>(null);
 
   const settingsDB = useRef(new SettingsDB()).current;
   const templateDB = useRef(new TemplateDB()).current;
@@ -264,12 +273,24 @@ function Photobooth() {
       }
     };
 
+    const handleAiChanged = (e: any) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setAiEffects(e.detail);
+      } else {
+        setAiEffects(loadLocalAiEffects());
+      }
+    };
+
     window.addEventListener("yodha_filters_changed", handleFiltersChanged);
+    window.addEventListener("yodha_ai_effects_changed", handleAiChanged);
     window.addEventListener("storage", handleFiltersChanged);
+    window.addEventListener("storage", handleAiChanged);
     return () => {
       mounted = false;
       window.removeEventListener("yodha_filters_changed", handleFiltersChanged);
+      window.removeEventListener("yodha_ai_effects_changed", handleAiChanged);
       window.removeEventListener("storage", handleFiltersChanged);
+      window.removeEventListener("storage", handleAiChanged);
     };
   }, [settingsDB]);
 
@@ -480,6 +501,9 @@ function Photobooth() {
             selectedFilter={selectedFilter}
             setSelectedFilter={setSelectedFilter}
             filters={cameraFilters.filter(f => f.enabled !== false)}
+            aiEffects={aiEffects.filter(e => e.enabled !== false)}
+            selectedAiEffect={selectedAiEffect}
+            setSelectedAiEffect={setSelectedAiEffect}
             onBack={() => setScreen("frame")}
             onNext={() => {
               ensureFullscreen();
@@ -497,6 +521,8 @@ function Photobooth() {
             variant={variant}
             selectedFilter={selectedFilter}
             filters={cameraFilters}
+            aiEffects={aiEffects}
+            selectedAiEffect={selectedAiEffect}
             photos={photos}
             setPhotos={setPhotos}
             onPhotosCaptured={(captured, capturedVideos) => {
@@ -1133,19 +1159,27 @@ function FilterScreen({
   onBack,
   onNext,
   filters = PHOTO_FILTERS,
+  aiEffects = [],
+  selectedAiEffect = null,
+  setSelectedAiEffect,
 }: {
   selectedFilter: string;
   setSelectedFilter: (f: string) => void;
   onBack: () => void;
   onNext: () => void;
   filters?: CameraFilter[];
+  aiEffects?: AiEffect[];
+  selectedAiEffect?: string | null;
+  setSelectedAiEffect?: (id: string | null) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [filterTab, setFilterTab] = useState<"color" | "ai">(selectedAiEffect ? "ai" : "color");
 
   const activeFilters = filters && filters.length > 0 ? filters : PHOTO_FILTERS;
   const activeFilter = activeFilters.find(f => f.id === selectedFilter) || activeFilters[0];
+  const activeAiEffect = selectedAiEffect ? aiEffects.find(a => a.id === selectedAiEffect) : null;
 
   useEffect(() => {
     if (!activeFilters.some(f => f.id === selectedFilter)) {
@@ -1194,19 +1228,24 @@ function FilterScreen({
     };
   }, []);
 
+  // Compute live CSS filter style
+  const liveFilterCss = activeAiEffect
+    ? getAiPreviewCss(activeAiEffect.shaderType)
+    : activeFilter.css;
+
   return (
     <div className="w-full max-w-4xl flex flex-col items-center gap-4 sm:gap-6">
       <div className="text-center space-y-1">
         <h2 className="pixel text-lg sm:text-2xl text-[var(--color-ink)]">
-          PILIH FILTER KAMERA ✨
+          PILIH FILTER & EFEK AI ✨
         </h2>
         <p className="text-xs sm:text-sm text-slate-500 font-sans">
-          Pratinjau langsung tampilan wajah Anda sebelum sesi pemotretan dimulai.
+          Pratinjau tampilan foto sebelum sesi pemotretan dimulai.
         </p>
       </div>
 
-      {/* Live Viewfinder Box - Much Larger */}
-      <div className="relative w-full max-w-3xl aspect-[4/3] max-h-[58vh] rounded-3xl overflow-hidden border-4 border-[#3A2A40] bg-black shadow-[10px_10px_0_0_rgba(58,42,64,0.25)] flex items-center justify-center">
+      {/* Live Viewfinder Box */}
+      <div className="relative w-full max-w-3xl aspect-[4/3] max-h-[56vh] rounded-3xl overflow-hidden border-4 border-[#3A2A40] bg-black shadow-[10px_10px_0_0_rgba(58,42,64,0.25)] flex items-center justify-center">
         {!error && (
           <video
             ref={videoRef}
@@ -1216,7 +1255,7 @@ function FilterScreen({
             style={{
               transform: `scaleX(-1) scale(${cameraZoom})`,
               transformOrigin: "center center",
-              filter: activeFilter.css,
+              filter: liveFilterCss,
             }}
           />
         )}
@@ -1231,47 +1270,140 @@ function FilterScreen({
         {/* Live Filter Indicator Badge */}
         <div className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white text-[11px] font-sans">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="font-bold">{activeFilter.emoji} {activeFilter.name}</span>
+          {activeAiEffect ? (
+            <span className="font-bold flex items-center gap-1">
+              <span>{activeAiEffect.emoji}</span>
+              <span>AI: {activeAiEffect.name}</span>
+            </span>
+          ) : (
+            <span className="font-bold">{activeFilter.emoji} {activeFilter.name}</span>
+          )}
         </div>
 
         <div className="absolute bottom-4 left-4 right-4 z-20 flex items-center justify-between px-4 py-2 rounded-2xl bg-black/60 backdrop-blur-md border border-white/20 text-white text-[11px] font-sans">
-          <span className="text-slate-200 text-xs">{activeFilter.desc}</span>
-          <span className="text-[10px] text-amber-300 font-bold tracking-wider uppercase">Live View</span>
+          <span className="text-slate-200 text-xs truncate max-w-[70%]">
+            {activeAiEffect ? activeAiEffect.desc : activeFilter.desc}
+          </span>
+          <span className="text-[10px] text-amber-300 font-bold tracking-wider uppercase">
+            {activeAiEffect ? "Dreambooth AI" : "Live View"}
+          </span>
         </div>
       </div>
 
-      {/* Horizontal Circular Filters ("lingkaran memanjang") */}
-      <div className="w-full max-w-3xl flex flex-row items-center justify-center gap-3 sm:gap-6 overflow-x-auto py-2 px-2 no-scrollbar">
-        {activeFilters.map((f) => {
-          const isSelected = f.id === selectedFilter;
-          return (
-            <button
-              key={f.id}
-              onClick={() => setSelectedFilter(f.id)}
-              className="group flex flex-col items-center gap-1.5 focus:outline-none cursor-pointer shrink-0 transition-transform active:scale-95"
-            >
-              <div
-                className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center transition-all duration-200 ${
-                  isSelected
-                    ? "border-4 border-[#3A2A40] bg-[var(--color-butter)] shadow-[0_0_0_3px_#3A2A40] scale-110 -translate-y-1"
-                    : "border-2 border-slate-300 bg-white hover:border-[#3A2A40] hover:scale-105 shadow-sm"
-                }`}
-              >
-                <span className="text-2xl sm:text-3xl select-none group-hover:scale-110 transition-transform">
-                  {f.emoji}
-                </span>
-              </div>
-              <span
-                className={`pixel text-[8px] sm:text-[9px] text-center font-bold tracking-tight max-w-[85px] truncate transition-colors ${
-                  isSelected ? "text-[#3A2A40]" : "text-slate-500 group-hover:text-slate-800"
-                }`}
-              >
-                {f.name}
-              </span>
-            </button>
-          );
-        })}
+      {/* Tab Selector: Filter Warna vs Efek AI Dreambooth */}
+      <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-2xl border border-slate-200 shadow-inner">
+        <button
+          type="button"
+          onClick={() => setFilterTab("color")}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            filterTab === "color"
+              ? "bg-[var(--color-butter)] text-[var(--color-ink)] shadow-xs"
+              : "text-slate-600 hover:text-slate-900"
+          }`}
+        >
+          🎨 Filter Warna Klasik ({activeFilters.length})
+        </button>
+
+        {aiEffects.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setFilterTab("ai")}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              filterTab === "ai"
+                ? "bg-[var(--color-butter)] text-[var(--color-ink)] shadow-xs"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <span>✨ Efek AI Dreambooth</span>
+            <span className="px-1.5 py-0.2 bg-violet-600 text-white text-[9px] rounded-full font-extrabold">
+              {aiEffects.length}
+            </span>
+          </button>
+        )}
       </div>
+
+      {/* Mode 1: Classic Color Filters */}
+      {filterTab === "color" && (
+        <div className="w-full max-w-3xl flex flex-row items-center justify-center gap-3 sm:gap-6 overflow-x-auto py-2 px-2 no-scrollbar">
+          {activeFilters.map((f) => {
+            const isSelected = !selectedAiEffect && f.id === selectedFilter;
+            return (
+              <button
+                key={f.id}
+                onClick={() => {
+                  setSelectedFilter(f.id);
+                  setSelectedAiEffect?.(null);
+                }}
+                className="group flex flex-col items-center gap-1.5 focus:outline-none cursor-pointer shrink-0 transition-transform active:scale-95"
+              >
+                <div
+                  className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center transition-all duration-200 ${
+                    isSelected
+                      ? "border-4 border-[#3A2A40] bg-[var(--color-butter)] shadow-[0_0_0_3px_#3A2A40] scale-110 -translate-y-1"
+                      : "border-2 border-slate-300 bg-white hover:border-[#3A2A40] hover:scale-105 shadow-sm"
+                  }`}
+                >
+                  <span className="text-2xl sm:text-3xl select-none group-hover:scale-110 transition-transform">
+                    {f.emoji}
+                  </span>
+                </div>
+                <span
+                  className={`pixel text-[8px] sm:text-[9px] text-center font-bold tracking-tight max-w-[85px] truncate transition-colors ${
+                    isSelected ? "text-[#3A2A40]" : "text-slate-500 group-hover:text-slate-800"
+                  }`}
+                >
+                  {f.name}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Mode 2: Dreambooth AI Effects */}
+      {filterTab === "ai" && (
+        <div className="w-full max-w-3xl flex flex-row items-center justify-start sm:justify-center gap-3 sm:gap-4 overflow-x-auto py-2 px-2 no-scrollbar">
+          {aiEffects.map((ai) => {
+            const isSelected = selectedAiEffect === ai.id;
+            return (
+              <button
+                key={ai.id}
+                onClick={() => setSelectedAiEffect?.(ai.id)}
+                className="group flex flex-col items-center gap-1.5 focus:outline-none cursor-pointer shrink-0 transition-transform active:scale-95"
+              >
+                <div
+                  className={`w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden border-2 transition-all duration-200 relative flex items-center justify-center bg-slate-900 ${
+                    isSelected
+                      ? "border-4 border-violet-600 ring-4 ring-violet-300 scale-105 -translate-y-1 shadow-lg"
+                      : "border-slate-300 hover:border-violet-400 hover:scale-105 shadow-sm opacity-85 hover:opacity-100"
+                  }`}
+                >
+                  <img
+                    src={ai.previewUrl}
+                    alt={ai.name}
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute top-1 left-1 px-1.5 py-0.2 rounded-md bg-black/60 backdrop-blur-xs text-white text-[9px] font-bold">
+                    {ai.emoji}
+                  </div>
+                  {isSelected && (
+                    <div className="absolute inset-0 bg-violet-600/20 flex items-center justify-center">
+                      <span className="text-white text-base">✓</span>
+                    </div>
+                  )}
+                </div>
+                <span
+                  className={`pixel text-[8px] sm:text-[9px] text-center font-bold tracking-tight max-w-[90px] truncate transition-colors ${
+                    isSelected ? "text-violet-700 font-extrabold" : "text-slate-600 group-hover:text-slate-900"
+                  }`}
+                >
+                  {ai.name}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Navigation Buttons */}
       <div className="flex items-center justify-between w-full max-w-3xl pt-1">
@@ -1335,6 +1467,8 @@ function getDefaultDimensionsForLayout(layout?: string): { w: number; h: number 
 
 function ShootScreen({
   frame, layout, variant, selectedFilter = "normal", photos, setPhotos, onPhotosCaptured, onBack, isFullscreen, onToggleFullscreen, templates, filters = PHOTO_FILTERS,
+  aiEffects = [],
+  selectedAiEffect = null,
 }: {
   frame: FrameId;
   layout: LayoutId;
@@ -1348,6 +1482,8 @@ function ShootScreen({
   onToggleFullscreen: () => void;
   templates: Template[];
   filters?: CameraFilter[];
+  aiEffects?: AiEffect[];
+  selectedAiEffect?: string | null;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -1547,8 +1683,17 @@ function ShootScreen({
     }
 
     ctx.drawImage(video, 0, 0, w, h);
+
+    // Apply AI Effect stylization shader if an AI effect is selected
+    if (selectedAiEffect) {
+      const activeAi = aiEffects.find(a => a.id === selectedAiEffect);
+      if (activeAi) {
+        applyAiShaderToContext(ctx, activeAi.shaderType, w, h);
+      }
+    }
+
     return canvas.toDataURL("image/jpeg", 0.95);
-  }, [selectedFilter, cameraZoom, activeFilters]);
+  }, [selectedFilter, cameraZoom, activeFilters, selectedAiEffect, aiEffects]);
 
   const runSequence = useCallback(async () => {
     if (shooting) return;
@@ -1609,7 +1754,9 @@ function ShootScreen({
           style={{
             transform: `scaleX(-1) scale(${cameraZoom})`,
             transformOrigin: "center center",
-            filter: activeFilters.find(f => f.id === selectedFilter)?.css || "none",
+            filter: selectedAiEffect
+              ? getAiPreviewCss(aiEffects.find(a => a.id === selectedAiEffect)?.shaderType || "3d_movie")
+              : (activeFilters.find(f => f.id === selectedFilter)?.css || "none"),
           }}
         />
       )}
@@ -1669,6 +1816,19 @@ function ShootScreen({
             <span className="w-2.5 h-2.5 bg-red-500 heart-blink rounded-full" />
             <span className="pixel text-white text-[9px]">LIVE</span>
           </div>
+
+          {selectedAiEffect && (
+            <div
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-purple-400/40 shadow-sm"
+              style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.8), rgba(236,72,153,0.8))", backdropFilter: "blur(6px)" }}
+            >
+              <span className="text-[10px]">✨</span>
+              <span className="pixel text-white text-[9px] uppercase tracking-wider font-bold">
+                AI: {aiEffects.find(a => a.id === selectedAiEffect)?.name || "DREAMBOOTH"}
+              </span>
+            </div>
+          )}
+
           <button
             onClick={onToggleFullscreen}
             title={isFullscreen ? "Keluar Layar Penuh (F11)" : "Layar Penuh (F11)"}

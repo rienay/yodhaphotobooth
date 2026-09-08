@@ -16,6 +16,7 @@ export interface FilterSliderSettings {
   grayscale: number;  // 0 - 100% (default 0)
   hueRotate: number;  // 0 - 360deg (default 0)
   blur: number;       // 0 - 5px (default 0)
+  invert?: number;    // 0 - 100% (default 0)
 }
 
 export const DEFAULT_SLIDER_SETTINGS: FilterSliderSettings = {
@@ -26,6 +27,7 @@ export const DEFAULT_SLIDER_SETTINGS: FilterSliderSettings = {
   grayscale: 0,
   hueRotate: 0,
   blur: 0,
+  invert: 0,
 };
 
 export const DEFAULT_PHOTO_FILTERS: CameraFilter[] = [
@@ -35,6 +37,87 @@ export const DEFAULT_PHOTO_FILTERS: CameraFilter[] = [
     css: "none",
     emoji: "✨",
     desc: "Warna jernih natural tanpa efek tambahan",
+    enabled: true,
+    isCustom: false,
+  },
+  {
+    id: "clarendon",
+    name: "Clarendon",
+    css: "contrast(1.2) saturate(1.25) brightness(1.1)",
+    emoji: "📸",
+    desc: "Highlight cerah, bayangan kontras tegas, dan warna pop segar",
+    enabled: true,
+    isCustom: false,
+  },
+  {
+    id: "gingham",
+    name: "Gingham Vintage",
+    css: "sepia(0.3) contrast(0.9) brightness(1.1)",
+    emoji: "📻",
+    desc: "Nuansa vintage lembut ala foto analog berkesan hangat pudar",
+    enabled: true,
+    isCustom: false,
+  },
+  {
+    id: "moon",
+    name: "Moon Dreamy B&W",
+    css: "grayscale(1) contrast(0.9) brightness(1.15)",
+    emoji: "🌙",
+    desc: "Hitam putih lembut bercahaya dengan bayangan halus elegan",
+    enabled: true,
+    isCustom: false,
+  },
+  {
+    id: "polaroid",
+    name: "Polaroid 70s",
+    css: "contrast(1.15) brightness(1.1) saturate(1.25) sepia(0.2)",
+    emoji: "📷",
+    desc: "Warna khas kamera instan Polaroid tahun 70-an yang otentik",
+    enabled: true,
+    isCustom: false,
+  },
+  {
+    id: "kodachrome",
+    name: "Kodachrome Analog",
+    css: "contrast(1.25) saturate(1.4) brightness(1.08) sepia(0.15)",
+    emoji: "📽️",
+    desc: "Karakter legendaris film 1935 dengan nada merah-kuning kaya",
+    enabled: true,
+    isCustom: false,
+  },
+  {
+    id: "technicolor",
+    name: "Technicolor Classic",
+    css: "contrast(1.35) saturate(1.6) brightness(1.1) hue-rotate(350deg)",
+    emoji: "🎬",
+    desc: "Warna sinema 3-strip Hollywood tempo dulu yang cerah memukau",
+    enabled: true,
+    isCustom: false,
+  },
+  {
+    id: "brownie",
+    name: "Brownie 1900",
+    css: "sepia(0.65) contrast(1.15) brightness(0.95) saturate(1.15)",
+    emoji: "🕰️",
+    desc: "Foto kuno bersejarah abad ke-20 ala kamera Kodak Brownie",
+    enabled: true,
+    isCustom: false,
+  },
+  {
+    id: "vintage",
+    name: "Vintage Pinhole",
+    css: "sepia(0.4) contrast(1.3) brightness(0.9) saturate(0.85)",
+    emoji: "🕳️",
+    desc: "Kesan foto lofi kamera lubang jarum antik berkarakter gelap",
+    enabled: true,
+    isCustom: false,
+  },
+  {
+    id: "noir",
+    name: "Film Noir Desaturate",
+    css: "grayscale(1) contrast(1.4) brightness(0.95)",
+    emoji: "🕵️",
+    desc: "Hitam putih dramatis kontras tinggi dengan bayangan pekat",
     enabled: true,
     isCustom: false,
   },
@@ -49,7 +132,7 @@ export const DEFAULT_PHOTO_FILTERS: CameraFilter[] = [
   },
   {
     id: "bw",
-    name: "Hitam Putih (B&W)",
+    name: "Hitam Putih Klasik",
     css: "grayscale(1) contrast(1.2) brightness(1.05)",
     emoji: "🖤",
     desc: "Monokrom klasik elegan bernuansa film noir",
@@ -80,6 +163,33 @@ export const DEFAULT_PHOTO_FILTERS: CameraFilter[] = [
     css: "contrast(1.3) saturate(1.4) brightness(1.04)",
     emoji: "⚡",
     desc: "Warna kontras tinggi pop energik gaya futuristik",
+    enabled: true,
+    isCustom: false,
+  },
+  {
+    id: "hueshift",
+    name: "Spectrum Hue Shift",
+    css: "hue-rotate(180deg) saturate(1.2)",
+    emoji: "🌈",
+    desc: "Efek spektrum warna psychedelic 180 derajat yang unik",
+    enabled: true,
+    isCustom: false,
+  },
+  {
+    id: "negative",
+    name: "Klise Negatif Film",
+    css: "invert(1) hue-rotate(180deg)",
+    emoji: "🎞️",
+    desc: "Efek artistik klise film negatif kamera analog",
+    enabled: true,
+    isCustom: false,
+  },
+  {
+    id: "dreamy",
+    name: "Soft Dreamy Glow",
+    css: "blur(1.5px) brightness(1.08) contrast(1.05)",
+    emoji: "☁️",
+    desc: "Fokus lembut berkilau seperti dalam mimpi yang syahdu",
     enabled: true,
     isCustom: false,
   },
@@ -124,6 +234,12 @@ export function generateFilterCss(s: FilterSliderSettings): string {
   // Hue-Rotate
   if (s.hueRotate > 0) {
     parts.push(`hue-rotate(${Math.round(s.hueRotate)}deg)`);
+  }
+
+  // Invert
+  if (s.invert && s.invert > 0) {
+    const inv = Math.round((s.invert / 100) * 100) / 100;
+    parts.push(`invert(${inv})`);
   }
 
   // Blur
@@ -182,6 +298,13 @@ export function parseFilterCss(css: string): FilterSliderSettings {
     s.hueRotate = Math.round(parseFloat(hMatch[1]));
   }
 
+  // Invert
+  const invMatch = css.match(/invert\(([\d.]+)%?\)/i);
+  if (invMatch) {
+    const val = parseFloat(invMatch[1]);
+    s.invert = Math.round(invMatch[0].includes("%") ? val : (val <= 1 ? val * 100 : val));
+  }
+
   // Blur
   const blMatch = css.match(/blur\(([\d.]+)px\)/i);
   if (blMatch) {
@@ -203,6 +326,14 @@ export function loadLocalFilters(): CameraFilter[] {
     if (raw) {
       const parsed: CameraFilter[] = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
+        // Automatically merge new default filters if not present
+        const existingIds = new Set(parsed.map((f) => f.id));
+        const missingDefaults = DEFAULT_PHOTO_FILTERS.filter((def) => !existingIds.has(def.id));
+        if (missingDefaults.length > 0) {
+          const merged = [...parsed, ...missingDefaults];
+          saveLocalFilters(merged);
+          return merged;
+        }
         return parsed;
       }
     }

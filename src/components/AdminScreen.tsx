@@ -53,6 +53,17 @@ import {
   loadLocalFilters,
   saveLocalFilters,
 } from "../lib/filters";
+import {
+  AiEffect,
+  AiProviderSettings,
+  DEFAULT_AI_EFFECTS,
+  DEFAULT_AI_PROVIDER_SETTINGS,
+  loadLocalAiEffects,
+  saveLocalAiEffects,
+  loadAiProviderSettings,
+  saveAiProviderSettings,
+  applyAiStylization,
+} from "../lib/aiEffects";
 
 export interface Template {
   id: string;
@@ -193,61 +204,127 @@ const FILTER_PRESETS: { name: string; emoji: string; desc: string; sliders: Filt
     name: "Alami (Natural)",
     emoji: "✨",
     desc: "Warna natural jernih tanpa efek modifikasi",
-    sliders: { brightness: 100, contrast: 100, saturate: 100, sepia: 0, grayscale: 0, hueRotate: 0, blur: 0 },
+    sliders: { brightness: 100, contrast: 100, saturate: 100, sepia: 0, grayscale: 0, hueRotate: 0, blur: 0, invert: 0 },
+  },
+  {
+    name: "Clarendon",
+    emoji: "📸",
+    desc: "Highlight cerah, kontras tegas, dan warna pop segar",
+    sliders: { brightness: 110, contrast: 120, saturate: 125, sepia: 0, grayscale: 0, hueRotate: 0, blur: 0, invert: 0 },
+  },
+  {
+    name: "Gingham Vintage",
+    emoji: "📻",
+    desc: "Nuansa vintage lembut ala foto analog berkesan hangat",
+    sliders: { brightness: 110, contrast: 90, saturate: 100, sepia: 30, grayscale: 0, hueRotate: 0, blur: 0, invert: 0 },
+  },
+  {
+    name: "Moon (Dreamy B&W)",
+    emoji: "🌙",
+    desc: "Hitam putih lembut bercahaya dengan bayangan halus elegan",
+    sliders: { brightness: 115, contrast: 90, saturate: 100, sepia: 0, grayscale: 100, hueRotate: 0, blur: 0, invert: 0 },
+  },
+  {
+    name: "Polaroid 70s",
+    emoji: "📷",
+    desc: "Warna khas kamera instan Polaroid tahun 70-an yang otentik",
+    sliders: { brightness: 110, contrast: 115, saturate: 125, sepia: 20, grayscale: 0, hueRotate: 0, blur: 0, invert: 0 },
+  },
+  {
+    name: "Kodachrome Analog",
+    emoji: "📽️",
+    desc: "Karakter legendaris film 1935 dengan nada warna hangat kaya",
+    sliders: { brightness: 108, contrast: 125, saturate: 140, sepia: 15, grayscale: 0, hueRotate: 0, blur: 0, invert: 0 },
+  },
+  {
+    name: "Technicolor Classic",
+    emoji: "🎬",
+    desc: "Warna sinema 3-strip Hollywood tempo dulu yang cerah",
+    sliders: { brightness: 110, contrast: 135, saturate: 160, sepia: 0, grayscale: 0, hueRotate: 350, blur: 0, invert: 0 },
+  },
+  {
+    name: "Brownie 1900",
+    emoji: "🕰️",
+    desc: "Foto kuno bersejarah awal abad ke-20 ala kamera Kodak Brownie",
+    sliders: { brightness: 95, contrast: 115, saturate: 115, sepia: 65, grayscale: 0, hueRotate: 0, blur: 0, invert: 0 },
+  },
+  {
+    name: "Vintage Pinhole",
+    emoji: "🕳️",
+    desc: "Kesan foto lofi kamera lubang jarum antik berkarakter",
+    sliders: { brightness: 90, contrast: 130, saturate: 85, sepia: 40, grayscale: 0, hueRotate: 0, blur: 0, invert: 0 },
+  },
+  {
+    name: "Film Noir Desaturate",
+    emoji: "🕵️",
+    desc: "Hitam putih dramatis kontras tinggi dengan bayangan pekat",
+    sliders: { brightness: 95, contrast: 140, saturate: 100, sepia: 0, grayscale: 100, hueRotate: 0, blur: 0, invert: 0 },
   },
   {
     name: "Vintage Hangat 90-an",
     emoji: "🎞️",
     desc: "Kesan nostalgia hangat ala foto film analog 90-an",
-    sliders: { brightness: 102, contrast: 105, saturate: 115, sepia: 35, grayscale: 0, hueRotate: 0, blur: 0 },
-  },
-  {
-    name: "Monokrom Noir (B&W)",
-    emoji: "🖤",
-    desc: "Hitam putih kontras tinggi bernuansa klasik elegan",
-    sliders: { brightness: 105, contrast: 125, saturate: 100, sepia: 0, grayscale: 100, hueRotate: 0, blur: 0 },
+    sliders: { brightness: 102, contrast: 105, saturate: 115, sepia: 35, grayscale: 0, hueRotate: 0, blur: 0, invert: 0 },
   },
   {
     name: "Soft Barbie Glow",
     emoji: "🌸",
     desc: "Cerah segar merona dengan kelembutan bercahaya",
-    sliders: { brightness: 110, contrast: 105, saturate: 125, sepia: 0, grayscale: 0, hueRotate: 0, blur: 0 },
+    sliders: { brightness: 110, contrast: 105, saturate: 125, sepia: 0, grayscale: 0, hueRotate: 0, blur: 0, invert: 0 },
   },
   {
     name: "Sunset Golden Hour",
     emoji: "🌅",
     desc: "Kilau sinar matahari senja keemasan yang mempesona",
-    sliders: { brightness: 106, contrast: 108, saturate: 135, sepia: 22, grayscale: 0, hueRotate: 345, blur: 0 },
+    sliders: { brightness: 106, contrast: 108, saturate: 135, sepia: 22, grayscale: 0, hueRotate: 345, blur: 0, invert: 0 },
   },
   {
     name: "Cool Sinematik",
     emoji: "❄️",
     desc: "Warna sejuk misterius khas adegan film layar lebar",
-    sliders: { brightness: 100, contrast: 110, saturate: 90, sepia: 0, grayscale: 0, hueRotate: 185, blur: 0 },
+    sliders: { brightness: 100, contrast: 110, saturate: 90, sepia: 0, grayscale: 0, hueRotate: 185, blur: 0, invert: 0 },
   },
   {
     name: "Retro Cyberpunk",
     emoji: "⚡",
     desc: "Kontras tajam dan saturasi tinggi gaya neon futuristik",
-    sliders: { brightness: 104, contrast: 130, saturate: 145, sepia: 0, grayscale: 0, hueRotate: 0, blur: 0 },
+    sliders: { brightness: 104, contrast: 130, saturate: 145, sepia: 0, grayscale: 0, hueRotate: 0, blur: 0, invert: 0 },
+  },
+  {
+    name: "Spectrum Hue Shift",
+    emoji: "🌈",
+    desc: "Efek spektrum warna psychedelic 180 derajat yang unik",
+    sliders: { brightness: 100, contrast: 100, saturate: 120, sepia: 0, grayscale: 0, hueRotate: 180, blur: 0, invert: 0 },
+  },
+  {
+    name: "Klise Negatif Film",
+    emoji: "🎞️",
+    desc: "Efek artistik klise negatif film kamera analog",
+    sliders: { brightness: 100, contrast: 100, saturate: 100, sepia: 0, grayscale: 0, hueRotate: 180, blur: 0, invert: 100 },
+  },
+  {
+    name: "Soft Dreamy Glow",
+    emoji: "☁️",
+    desc: "Fokus lembut berkilau seperti dalam mimpi yang syahdu",
+    sliders: { brightness: 108, contrast: 105, saturate: 100, sepia: 0, grayscale: 0, hueRotate: 0, blur: 1.5, invert: 0 },
   },
   {
     name: "Warm Cafe Latte",
     emoji: "☕",
     desc: "Nuansa cokelat lembut dan santai seperti kedai kopi",
-    sliders: { brightness: 104, contrast: 98, saturate: 92, sepia: 40, grayscale: 0, hueRotate: 10, blur: 0 },
+    sliders: { brightness: 104, contrast: 98, saturate: 92, sepia: 40, grayscale: 0, hueRotate: 10, blur: 0, invert: 0 },
   },
   {
     name: "Pastel Sweet Candy",
     emoji: "🍬",
     desc: "Kecerahan tinggi lembut dengan saturasi manis pastel",
-    sliders: { brightness: 115, contrast: 96, saturate: 112, sepia: 8, grayscale: 0, hueRotate: 320, blur: 0 },
+    sliders: { brightness: 115, contrast: 96, saturate: 112, sepia: 8, grayscale: 0, hueRotate: 320, blur: 0, invert: 0 },
   },
   {
     name: "Moody Forest Green",
     emoji: "🌲",
     desc: "Nuansa alam teduh dengan saturasi seimbang",
-    sliders: { brightness: 96, contrast: 112, saturate: 88, sepia: 12, grayscale: 0, hueRotate: 90, blur: 0 },
+    sliders: { brightness: 96, contrast: 112, saturate: 88, sepia: 12, grayscale: 0, hueRotate: 90, blur: 0, invert: 0 },
   },
 ];
 
@@ -266,7 +343,7 @@ export function AdminScreen({
   onLaunchBooth,
   onLogout,
 }: AdminScreenProps) {
-  const [activeNav, setActiveNav] = useState<"dashboard" | "frames" | "filters" | "gallery" | "devices" | "settings" | "database">("dashboard");
+  const [activeNav, setActiveNav] = useState<"dashboard" | "frames" | "filters" | "ai" | "gallery" | "devices" | "settings" | "database">("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -363,6 +440,39 @@ export function AdminScreen({
   const [copiedCssId, setCopiedCssId] = useState<string | null>(null);
   const [filterFeedbackMsg, setFilterFeedbackMsg] = useState("");
 
+  // ── Dreambooth AI Effects State & Modals ──
+  const [aiEffects, setAiEffects] = useState<AiEffect[]>(() => loadLocalAiEffects());
+  const [aiProviderSettings, setAiProviderSettings] = useState<AiProviderSettings>(() => loadAiProviderSettings());
+  const [aiCategoryFilter, setAiCategoryFilter] = useState<string>("all");
+  const [aiSearchQuery, setAiSearchQuery] = useState("");
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [editingAiId, setEditingAiId] = useState<string | null>(null);
+  const [aiName, setAiName] = useState("");
+  const [aiEmoji, setAiEmoji] = useState("✨");
+  const [aiCategory, setAiCategory] = useState<AiEffect["category"]>("character");
+  const [aiDesc, setAiDesc] = useState("");
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiNegativePrompt, setAiNegativePrompt] = useState("");
+  const [aiShaderType, setAiShaderType] = useState<AiEffect["shaderType"]>("3d_movie");
+  const [aiPreviewUrl, setAiPreviewUrl] = useState("");
+  const [aiModalError, setAiModalError] = useState("");
+  const [aiFeedbackMsg, setAiFeedbackMsg] = useState("");
+
+  // AI Provider Settings Modal
+  const [showAiProviderModal, setShowAiProviderModal] = useState(false);
+  const [providerModeInput, setProviderModeInput] = useState<AiProviderSettings["mode"]>(aiProviderSettings.mode);
+  const [apiKeyInput, setApiKeyInput] = useState(aiProviderSettings.apiKey || "");
+  const [apiEndpointInput, setApiEndpointInput] = useState(aiProviderSettings.apiEndpoint || "");
+  const [strengthInput, setStrengthInput] = useState<number>(aiProviderSettings.strength || 0.85);
+
+  // AI Interactive Testing Modal
+  const [showAiTestModal, setShowAiTestModal] = useState(false);
+  const [testingAiEffect, setTestingAiEffect] = useState<AiEffect | null>(null);
+  const [testSourceImg, setTestSourceImg] = useState<string>(SAMPLE_PORTRAIT_URL);
+  const [testResultImg, setTestResultImg] = useState<string | null>(null);
+  const [isProcessingAiTest, setIsProcessingAiTest] = useState(false);
+  const [testCompareBefore, setTestCompareBefore] = useState(false);
+
   // Load initial data
   useEffect(() => {
     // Admin screen should never be in fullscreen mode
@@ -408,8 +518,18 @@ export function AdminScreen({
     // Camera filters
     settingsDB.getSetting<CameraFilter[]>("camera_filters", DEFAULT_PHOTO_FILTERS).then((val) => {
       if (val && Array.isArray(val) && val.length > 0) {
-        setFilters(val);
-        saveLocalFilters(val);
+        const existingIds = new Set(val.map((f) => f.id));
+        const missing = DEFAULT_PHOTO_FILTERS.filter((d) => !existingIds.has(d.id));
+        const merged = missing.length > 0 ? [...val, ...missing] : val;
+        setFilters(merged);
+        saveLocalFilters(merged);
+        if (missing.length > 0) {
+          settingsDB.saveSetting("camera_filters", merged);
+        }
+      } else {
+        setFilters(DEFAULT_PHOTO_FILTERS);
+        saveLocalFilters(DEFAULT_PHOTO_FILTERS);
+        settingsDB.saveSetting("camera_filters", DEFAULT_PHOTO_FILTERS);
       }
     });
   }, []);
@@ -430,7 +550,7 @@ export function AdminScreen({
   };
 
   const handleResetFiltersToDefault = async () => {
-    if (confirm("Kembalikan seluruh filter kamera ke 6 filter bawaan asli? Filter kustom akan direset.")) {
+    if (confirm("Kembalikan seluruh filter kamera ke daftar bawaan standar lengkap? Filter kustom akan direset.")) {
       setFilters(DEFAULT_PHOTO_FILTERS);
       saveLocalFilters(DEFAULT_PHOTO_FILTERS);
       await settingsDB.saveSetting("camera_filters", DEFAULT_PHOTO_FILTERS);
@@ -540,6 +660,186 @@ export function AdminScreen({
         : `🎉 Filter baru "${filterName.trim()}" berhasil ditambahkan!`
     );
     setTimeout(() => setFilterFeedbackMsg(""), 3500);
+  };
+
+  // ── AI Effects Handlers (Dreambooth) ──
+  const handleToggleAiEffect = (id: string, enabled: boolean) => {
+    const updated = aiEffects.map((e) => (e.id === id ? { ...e, enabled } : e));
+    setAiEffects(updated);
+    saveLocalAiEffects(updated);
+    const target = aiEffects.find((e) => e.id === id);
+    setAiFeedbackMsg(
+      enabled
+        ? `✅ Efek AI "${target?.name || id}" diaktifkan di booth.`
+        : `⏸️ Efek AI "${target?.name || id}" dinonaktifkan.`
+    );
+    setTimeout(() => setAiFeedbackMsg(""), 3500);
+  };
+
+  const handleDeleteAiEffect = (id: string) => {
+    const target = aiEffects.find((e) => e.id === id);
+    if (!target) return;
+    if (confirm(`Hapus efek AI "${target.name}" secara permanen?`)) {
+      const updated = aiEffects.filter((e) => e.id !== id);
+      setAiEffects(updated);
+      saveLocalAiEffects(updated);
+      setAiFeedbackMsg(`🗑️ Efek AI "${target.name}" telah dihapus.`);
+      setTimeout(() => setAiFeedbackMsg(""), 3500);
+    }
+  };
+
+  const handleResetAiEffectsToDefault = () => {
+    if (confirm("Kembalikan seluruh efek AI ke daftar standar Dreambooth asli? Efek kustom akan direset.")) {
+      setAiEffects(DEFAULT_AI_EFFECTS);
+      saveLocalAiEffects(DEFAULT_AI_EFFECTS);
+      setAiFeedbackMsg("🔄 Seluruh efek AI telah dikembalikan ke standar Dreambooth.");
+      setTimeout(() => setAiFeedbackMsg(""), 3500);
+    }
+  };
+
+  const handleOpenAddAiEffectModal = () => {
+    setEditingAiId(null);
+    setAiName("");
+    setAiEmoji("✨");
+    setAiCategory("character");
+    setAiDesc("");
+    setAiPrompt("");
+    setAiNegativePrompt("");
+    setAiShaderType("3d_movie");
+    setAiPreviewUrl("");
+    setAiModalError("");
+    setShowAiModal(true);
+  };
+
+  const handleOpenEditAiEffectModal = (eff: AiEffect) => {
+    setEditingAiId(eff.id);
+    setAiName(eff.name);
+    setAiEmoji(eff.emoji);
+    setAiCategory(eff.category);
+    setAiDesc(eff.desc);
+    setAiPrompt(eff.prompt || "");
+    setAiNegativePrompt(eff.negativePrompt || "");
+    setAiShaderType(eff.shaderType);
+    setAiPreviewUrl(eff.previewUrl || "");
+    setAiModalError("");
+    setShowAiModal(true);
+  };
+
+  const handleSaveAiEffectModal = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!aiName.trim()) {
+      setAiModalError("Nama efek AI tidak boleh kosong!");
+      return;
+    }
+
+    const catLabels: Record<string, string> = {
+      character: "Karakter 3D",
+      formal: "Formal & Studio",
+      retro: "Retro 2000-an",
+      art: "Seni Lukis",
+      game: "Mainan & Game",
+    };
+
+    let updated: AiEffect[];
+    if (editingAiId) {
+      updated = aiEffects.map((item) =>
+        item.id === editingAiId
+          ? {
+              ...item,
+              name: aiName.trim(),
+              emoji: aiEmoji.trim() || "✨",
+              category: aiCategory,
+              categoryLabel: catLabels[aiCategory] || "Efek AI",
+              desc: aiDesc.trim() || "Efek AI transformasi foto",
+              prompt: aiPrompt.trim(),
+              negativePrompt: aiNegativePrompt.trim(),
+              shaderType: aiShaderType,
+              previewUrl: aiPreviewUrl.trim() || item.previewUrl,
+              updatedAt: new Date().toISOString().split("T")[0],
+            }
+          : item
+      );
+    } else {
+      const newEff: AiEffect = {
+        id: "ai_custom_" + Date.now(),
+        name: aiName.trim(),
+        emoji: aiEmoji.trim() || "✨",
+        category: aiCategory,
+        categoryLabel: catLabels[aiCategory] || "Efek AI Kustom",
+        desc: aiDesc.trim() || "Efek transformasi buatan admin",
+        prompt: aiPrompt.trim(),
+        negativePrompt: aiNegativePrompt.trim(),
+        shaderType: aiShaderType,
+        previewUrl: aiPreviewUrl.trim() || SAMPLE_PORTRAIT_URL,
+        enabled: true,
+        isCustom: true,
+        author: "Admin Yodha",
+        updatedAt: new Date().toISOString().split("T")[0],
+      };
+      updated = [...aiEffects, newEff];
+    }
+
+    setAiEffects(updated);
+    saveLocalAiEffects(updated);
+    setShowAiModal(false);
+    setAiFeedbackMsg(
+      editingAiId
+        ? `✅ Efek AI "${aiName.trim()}" berhasil diperbarui!`
+        : `🎉 Efek AI baru "${aiName.trim()}" berhasil ditambahkan!`
+    );
+    setTimeout(() => setAiFeedbackMsg(""), 3500);
+  };
+
+  const handleSaveAiProviderModal = (e: React.FormEvent) => {
+    e.preventDefault();
+    const newSettings: AiProviderSettings = {
+      mode: providerModeInput,
+      apiKey: apiKeyInput.trim(),
+      apiEndpoint: apiEndpointInput.trim(),
+      strength: strengthInput,
+    };
+    setAiProviderSettings(newSettings);
+    saveAiProviderSettings(newSettings);
+    setShowAiProviderModal(false);
+    setAiFeedbackMsg("⚙️ Pengaturan Provider AI berhasil disimpan!");
+    setTimeout(() => setAiFeedbackMsg(""), 3500);
+  };
+
+  const handleOpenTestAiModal = (eff: AiEffect) => {
+    setTestingAiEffect(eff);
+    setTestResultImg(null);
+    setTestCompareBefore(false);
+    setShowAiTestModal(true);
+    setTimeout(() => {
+      runTestAiTransformation(eff, testSourceImg);
+    }, 120);
+  };
+
+  const runTestAiTransformation = async (eff: AiEffect, imgSrc: string) => {
+    setIsProcessingAiTest(true);
+    try {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.src = imgSrc;
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth || img.width || 600;
+      canvas.height = img.naturalHeight || img.height || 800;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(img, 0, 0);
+        const transformedDataUrl = await applyAiStylization(canvas, eff, aiProviderSettings);
+        setTestResultImg(transformedDataUrl);
+      }
+    } catch (err) {
+      console.error("Test AI transform error:", err);
+    } finally {
+      setIsProcessingAiTest(false);
+    }
   };
 
   // Photo Box Drag & Resize Listeners
@@ -1860,6 +2160,26 @@ export function AdminScreen({
             </button>
 
             <button
+              onClick={() => setActiveNav("ai")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                activeNav === "ai"
+                  ? "bg-blue-50 text-blue-600 font-bold shadow-xs"
+                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              } ${sidebarCollapsed ? "justify-center" : ""}`}
+              title="Koleksi Efek AI (Dreambooth)"
+            >
+              <Wand2 className="w-4 h-4 shrink-0 text-violet-600" />
+              {!sidebarCollapsed && (
+                <div className="flex items-center justify-between w-full">
+                  <span>Efek AI</span>
+                  <span className="text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-bold">
+                    {aiEffects.filter((e) => e.enabled).length} Aktif
+                  </span>
+                </div>
+              )}
+            </button>
+
+            <button
               onClick={() => setActiveNav("devices")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                 activeNav === "devices"
@@ -2014,7 +2334,7 @@ export function AdminScreen({
           {activeNav === "dashboard" && (
             <div className="space-y-6 max-w-7xl mx-auto">
               {/* Stat Cards Row */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
                 <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
                   <div>
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Sesi Foto</p>
@@ -2053,6 +2373,25 @@ export function AdminScreen({
                   </div>
                   <div className="w-12 h-12 rounded-2xl bg-pink-50 text-pink-600 flex items-center justify-center group-hover:scale-105 transition-transform">
                     <Sparkles className="w-6 h-6" />
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => setActiveNav("ai")}
+                  className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between cursor-pointer hover:border-violet-300 hover:shadow-sm transition-all group"
+                  title="Klik untuk kelola efek AI (Dreambooth)"
+                >
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider group-hover:text-violet-600 transition-colors">
+                      Efek AI Dreambooth
+                    </p>
+                    <h3 className="text-2xl font-black text-slate-900 mt-1">
+                      {aiEffects.filter((e) => e.enabled).length}
+                    </h3>
+                    <span className="text-[11px] text-violet-600 font-medium">Dari {aiEffects.length} gaya AI</span>
+                  </div>
+                  <div className="w-12 h-12 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center group-hover:scale-105 transition-transform">
+                    <Wand2 className="w-6 h-6" />
                   </div>
                 </div>
 
@@ -2476,6 +2815,302 @@ export function AdminScreen({
                 <p className="text-xs text-slate-600 leading-relaxed">
                   Semua filter kamera yang berstatus <strong>Aktif</strong> akan otomatis ditampilkan pada menu pemilihan filter pengunjung di layar Booth. Efek warna filter diproses secara real-time menggunakan akselerasi grafis perangkat (GPU), sehingga foto yang diambil maupun cetakan photo strip akan memiliki warna yang konsisten dan memukau.
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* ──────────────── TAB: EFEK AI (DREAMBOOTH) ──────────────── */}
+          {activeNav === "ai" && (
+            <div className="space-y-6 max-w-7xl mx-auto">
+              {/* Feedback toast notification */}
+              {aiFeedbackMsg && (
+                <div className="p-4 bg-violet-50 border border-violet-200 rounded-2xl text-xs font-bold text-violet-800 flex items-center gap-2 shadow-xs animate-in fade-in slide-in-from-top-2">
+                  <Wand2 className="w-4 h-4 text-violet-600 shrink-0" />
+                  <span>{aiFeedbackMsg}</span>
+                </div>
+              )}
+
+              {/* Header: Title, Description & Action Buttons */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h2 className="text-xl font-bold text-slate-900">Koleksi Efek AI Photobooth</h2>
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-gradient-to-r from-violet-100 to-pink-100 text-violet-800 border border-violet-200">
+                      <Sparkles className="w-3 h-3 text-pink-500" />
+                      <span>Dreambooth AI Studio</span>
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Koleksi efek transformasi AI untuk pengunjung kiosk: Karakter 3D Pixar, Pas Foto Jas Formal, Y2K Flash, Lukisan Cat Air, Sketsa Pensil, dan Anime.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Provider Settings Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProviderModeInput(aiProviderSettings.mode);
+                      setApiKeyInput(aiProviderSettings.apiKey || "");
+                      setApiEndpointInput(aiProviderSettings.apiEndpoint || "");
+                      setStrengthInput(aiProviderSettings.strength || 0.85);
+                      setShowAiProviderModal(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 hover:border-slate-300 transition-all cursor-pointer shadow-xs"
+                    title="Pengaturan Engine Provider AI"
+                  >
+                    <Sliders className="w-3.5 h-3.5 text-violet-600" />
+                    <span>Engine: {aiProviderSettings.mode === "client" ? "Offline Gratis" : "Cloud AI"}</span>
+                  </button>
+
+                  {/* Reset Defaults Button */}
+                  <button
+                    type="button"
+                    onClick={handleResetAiEffectsToDefault}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 hover:border-slate-300 transition-all cursor-pointer shadow-xs"
+                    title="Kembalikan semua efek ke standar Dreambooth"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Reset Standar</span>
+                  </button>
+
+                  {/* Add Custom AI Effect Button */}
+                  <button
+                    type="button"
+                    onClick={handleOpenAddAiEffectModal}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-violet-600/20 transition-all cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Tambah Efek AI</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Engine Status / Feature Banner */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-violet-50 via-indigo-50 to-pink-50 border border-violet-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-violet-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-violet-600/20">
+                    <Wand2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      <span>Mesin Transformasi AI Aktif:</span>
+                      <span className="text-violet-700 font-extrabold underline decoration-violet-300">
+                        {aiProviderSettings.mode === "client"
+                          ? "Client-Side Neural Shaders (100% Cepat & Offline)"
+                          : "Generative Cloud API"}
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-600 mt-0.5">
+                      {aiProviderSettings.mode === "client"
+                        ? "Memproses foto secara instan di browser/kiosk tanpa kuota API eksternal. Mendukung sketsa pensil, lukisan cat air, pop art, Y2K flash, dan karakter 3D."
+                        : "Terhubung dengan API eksternal untuk model image-to-image."}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end md:self-center shrink-0">
+                  <span className="text-[11px] font-bold text-violet-700 bg-white/80 px-2.5 py-1 rounded-lg border border-violet-200">
+                    {aiEffects.filter((e) => e.enabled).length} Efek Aktif di Booth
+                  </span>
+                </div>
+              </div>
+
+              {/* Filter Pills & Search Bar */}
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+                {/* Category Pills */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar w-full md:w-auto">
+                  {[
+                    { id: "all", label: "Semua Efek", count: aiEffects.length },
+                    { id: "character", label: "🧸 Karakter 3D & Anime", count: aiEffects.filter(e => e.category === "character").length },
+                    { id: "formal", label: "👔 Formal & Studio", count: aiEffects.filter(e => e.category === "formal").length },
+                    { id: "retro", label: "⚡ Retro & Y2K", count: aiEffects.filter(e => e.category === "retro").length },
+                    { id: "art", label: "🎨 Seni Lukis & Sketsa", count: aiEffects.filter(e => e.category === "art").length },
+                    { id: "game", label: "🎮 Mainan & Game", count: aiEffects.filter(e => e.category === "game").length },
+                  ].map((cat) => {
+                    const isSelected = aiCategoryFilter === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setAiCategoryFilter(cat.id)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                          isSelected
+                            ? "bg-violet-600 text-white shadow-sm font-bold"
+                            : "bg-white hover:bg-slate-100 text-slate-600 border border-slate-200"
+                        }`}
+                      >
+                        <span>{cat.label}</span>
+                        <span className={`ml-1 text-[10px] px-1.5 py-0.2 rounded-full ${isSelected ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>
+                          {cat.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Search Box */}
+                <div className="relative w-full md:w-64">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={aiSearchQuery}
+                    onChange={(e) => setAiSearchQuery(e.target.value)}
+                    placeholder="Cari efek AI atau prompt..."
+                    className="w-full bg-white border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
+                  />
+                </div>
+              </div>
+
+              {/* AI Effects Grid (Dreambooth Cards) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                {aiEffects
+                  .filter((eff) => {
+                    const matchCategory = aiCategoryFilter === "all" || eff.category === aiCategoryFilter;
+                    const q = aiSearchQuery.toLowerCase().trim();
+                    const matchQuery =
+                      !q ||
+                      eff.name.toLowerCase().includes(q) ||
+                      eff.desc.toLowerCase().includes(q) ||
+                      eff.prompt?.toLowerCase().includes(q);
+                    return matchCategory && matchQuery;
+                  })
+                  .map((eff) => {
+                    const isEnabled = eff.enabled !== false;
+                    return (
+                      <div
+                        key={eff.id}
+                        className={`bg-white rounded-2xl border transition-all duration-200 flex flex-col justify-between overflow-hidden shadow-xs hover:shadow-md ${
+                          isEnabled ? "border-slate-200/90" : "border-slate-200 bg-slate-50/60 opacity-80"
+                        }`}
+                      >
+                        <div className="space-y-3">
+                          {/* Card Preview Image with Badges */}
+                          <div className="relative aspect-[4/3] bg-slate-900 overflow-hidden group">
+                            <img
+                              src={eff.previewUrl}
+                              alt={eff.name}
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).src = SAMPLE_PORTRAIT_URL;
+                              }}
+                              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                            />
+
+                            {/* Category Pill on Top-Left */}
+                            <div className="absolute top-2.5 left-2.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md text-white text-[10px] font-bold border border-white/20 flex items-center gap-1 shadow-xs">
+                              <span>{eff.emoji || "✨"}</span>
+                              <span>{eff.categoryLabel}</span>
+                            </div>
+
+                            {/* Status Pill on Top-Right */}
+                            <div className="absolute top-2.5 right-2.5">
+                              <span
+                                className={`text-[10px] font-bold px-2.5 py-1 rounded-full shadow-xs ${
+                                  isEnabled
+                                    ? "bg-emerald-500 text-white"
+                                    : "bg-black/60 text-slate-200 backdrop-blur-xs"
+                                }`}
+                              >
+                                {isEnabled ? "Aktif di Booth" : "Nonaktif"}
+                              </span>
+                            </div>
+
+                            {/* Hover Quick Test Overlay */}
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 pointer-events-none">
+                              <span className="px-3 py-1.5 rounded-xl bg-white/90 backdrop-blur-xs text-slate-900 font-bold text-xs shadow-md">
+                                Pratinjau Efek AI
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Card Content: Title, Meta, Desc */}
+                          <div className="p-4 space-y-2.5">
+                            <div>
+                              <h3 className="text-sm font-bold text-slate-900 leading-tight">
+                                {eff.name}
+                              </h3>
+                              <p className="text-[11px] text-slate-400 font-medium mt-0.5">
+                                Terakhir diubah: {eff.updatedAt || "2026-08-19"} · {eff.author || "Dreambooth AI"}
+                              </p>
+                            </div>
+
+                            <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                              {eff.desc}
+                            </p>
+
+                            {/* Prompt Tag Pill */}
+                            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2 flex items-center justify-between gap-1.5">
+                              <p className="text-[10px] font-mono text-slate-600 truncate flex-1" title={eff.prompt}>
+                                <span className="font-bold text-violet-600">Prompt:</span> {eff.prompt}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard?.writeText?.(eff.prompt);
+                                  setAiFeedbackMsg(`📋 Prompt "${eff.name}" disalin ke clipboard!`);
+                                  setTimeout(() => setAiFeedbackMsg(""), 3000);
+                                }}
+                                className="p-1 rounded-md hover:bg-white text-slate-400 hover:text-violet-600 transition-colors cursor-pointer"
+                                title="Salin Prompt"
+                              >
+                                <Copy className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Card Footer: Primary DreamBooth Button ("Salin ke efek saya" / Aktifkan) */}
+                        <div className="px-4 py-3 bg-slate-50/80 border-t border-slate-100 space-y-2">
+                          {/* Dreambooth primary blue action button */}
+                          <button
+                            type="button"
+                            onClick={() => handleToggleAiEffect(eff.id, !isEnabled)}
+                            className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm ${
+                              isEnabled
+                                ? "bg-blue-600 hover:bg-blue-700 text-white"
+                                : "bg-slate-200 hover:bg-slate-300 text-slate-700"
+                            }`}
+                          >
+                            {isEnabled ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                            <span>{isEnabled ? "Salin ke efek saya (Aktif)" : "Gunakan di Booth"}</span>
+                          </button>
+
+                          {/* Secondary buttons: Test, Edit, Delete */}
+                          <div className="flex items-center justify-between gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenTestAiModal(eff)}
+                              className="flex-1 py-1 px-2 rounded-lg bg-white border border-slate-200 text-[11px] font-semibold text-slate-700 hover:bg-violet-50 hover:text-violet-700 hover:border-violet-300 transition-colors flex items-center justify-center gap-1 cursor-pointer shadow-2xs"
+                              title="Uji coba efek AI pada foto contoh atau kamera"
+                            >
+                              <Sparkles className="w-3 h-3 text-violet-600" />
+                              <span>Uji Coba AI</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditAiEffectModal(eff)}
+                              className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 bg-white border border-slate-200 rounded-lg transition-colors cursor-pointer shadow-2xs"
+                              title="Edit Prompt & Pengaturan"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+
+                            {eff.isCustom && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteAiEffect(eff.id)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 bg-white border border-slate-200 rounded-lg transition-colors cursor-pointer shadow-2xs"
+                                title="Hapus Efek Kustom"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           )}
@@ -4111,6 +4746,22 @@ export function AdminScreen({
                       />
                     </div>
 
+                    {/* 8. Invert / Negatif */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-700">Efek Klise Negatif (Invert):</span>
+                        <span className="font-mono font-bold text-violet-600">{filterSliders.invert || 0}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={filterSliders.invert || 0}
+                        onChange={(e) => setFilterSliders({ ...filterSliders, invert: Number(e.target.value) })}
+                        className="w-full accent-violet-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
                     {/* Reset Sliders Button */}
                     <div className="pt-2 flex justify-end">
                       <button
@@ -4146,6 +4797,456 @@ export function AdminScreen({
                   className="px-6 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-700 hover:to-rose-700 text-white text-xs font-bold shadow-md shadow-pink-600/20 transition-all cursor-pointer"
                 >
                   {editingFilterId ? "Simpan Perubahan" : "Tambah Filter"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ──────────────── MODAL TAMBAH / EDIT EFEK AI (DREAMBOOTH) ──────────────── */}
+      {showAiModal && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-3 md:p-6 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-2xl w-full max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center font-bold text-lg shadow-xs">
+                  {aiEmoji || "✨"}
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    {editingAiId ? "Edit Efek AI" : "Tambah Efek AI Baru"}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Konfigurasi prompt dan gaya shader transformasi AI.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAiModal(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body Form */}
+            <form id="ai-effect-form" onSubmit={handleSaveAiEffectModal} className="flex-1 overflow-y-auto p-6 space-y-4">
+              {aiModalError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold rounded-xl flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{aiModalError}</span>
+                </div>
+              )}
+
+              {/* Emoji & Name */}
+              <div className="grid grid-cols-4 gap-3">
+                <div className="col-span-1 space-y-1">
+                  <label className="block text-xs font-bold text-slate-700">Ikon Emoji</label>
+                  <input
+                    type="text"
+                    value={aiEmoji}
+                    onChange={(e) => setAiEmoji(e.target.value)}
+                    maxLength={4}
+                    className="w-full px-3 py-2 text-center text-lg border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50 font-sans"
+                  />
+                </div>
+                <div className="col-span-3 space-y-1">
+                  <label className="block text-xs font-bold text-slate-700">Nama Efek AI</label>
+                  <input
+                    type="text"
+                    value={aiName}
+                    onChange={(e) => {
+                      setAiName(e.target.value);
+                      setAiModalError("");
+                    }}
+                    placeholder="Contoh: 3D Pixar Movie Character"
+                    className="w-full px-3.5 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 font-semibold bg-slate-50"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Category & Shader Engine */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700">Kategori</label>
+                  <select
+                    value={aiCategory}
+                    onChange={(e) => setAiCategory(e.target.value as any)}
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50"
+                  >
+                    <option value="character">🧸 Karakter 3D & Anime</option>
+                    <option value="formal">👔 Formal & Studio</option>
+                    <option value="retro">⚡ Retro & Y2K</option>
+                    <option value="art">🎨 Seni Lukis & Sketsa</option>
+                    <option value="game">🎮 Mainan & Game</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700">Gaya Shader / Engine</label>
+                  <select
+                    value={aiShaderType}
+                    onChange={(e) => setAiShaderType(e.target.value as any)}
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50"
+                  >
+                    <option value="3d_movie">3D Movie Character (Pixar / Disney)</option>
+                    <option value="pas_foto">Pas Foto Jas Formal</option>
+                    <option value="y2k_flash">Y2K Flash Camera</option>
+                    <option value="pencil">Pencil Sketch (Sketsa Pensil Grafit)</option>
+                    <option value="watercolor">Storybook Watercolor (Cat Air)</option>
+                    <option value="anime">Anime Portrait (Studio Ghibli)</option>
+                    <option value="lego">Lego Mini Bricks</option>
+                    <option value="sims">Sims Game [pink version]</option>
+                    <option value="sketch">Sketch Manga / Comic Pop Art</option>
+                    <option value="analog">Analog Film Portra 400</option>
+                    <option value="vintage_film">Vintage Film Strip</option>
+                    <option value="cyberpunk">Cyberpunk Neon Glow</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Description */}
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-slate-700">Deskripsi Singkat</label>
+                <input
+                  type="text"
+                  value={aiDesc}
+                  onChange={(e) => setAiDesc(e.target.value)}
+                  placeholder="Contoh: Mengubah foto menjadi karakter animasi 3D lucu"
+                  className="w-full px-3.5 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50"
+                />
+              </div>
+
+              {/* AI Prompt */}
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-slate-700">
+                  Prompt AI (Style & Visual Instructions)
+                </label>
+                <textarea
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  placeholder="3D animated movie character, Disney Pixar style, cute, smooth 3D render, octane render..."
+                  rows={3}
+                  className="w-full p-2.5 text-xs font-mono border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50"
+                />
+              </div>
+
+              {/* Negative Prompt */}
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-slate-700">
+                  Negative Prompt (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={aiNegativePrompt}
+                  onChange={(e) => setAiNegativePrompt(e.target.value)}
+                  placeholder="photorealistic, ugly, blurry, deformed..."
+                  className="w-full px-3.5 py-2 text-xs font-mono border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50"
+                />
+              </div>
+
+              {/* Preview Image URL */}
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-slate-700">
+                  URL Gambar Thumbnail Pratinjau
+                </label>
+                <input
+                  type="url"
+                  value={aiPreviewUrl}
+                  onChange={(e) => setAiPreviewUrl(e.target.value)}
+                  placeholder="https://images.unsplash.com/... (atau kosongkan untuk default)"
+                  className="w-full px-3.5 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50"
+                />
+              </div>
+            </form>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between shrink-0">
+              <span className="text-xs text-slate-500">
+                ✨ Efek AI akan langsung aktif di layar booth pengunjung.
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAiModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-white text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  form="ai-effect-form"
+                  className="px-6 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-violet-600/20 transition-all cursor-pointer"
+                >
+                  {editingAiId ? "Simpan Perubahan" : "Tambah Efek AI"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ──────────────── MODAL KONFIGURASI ENGINE PROVIDER AI ──────────────── */}
+      {showAiProviderModal && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-3 md:p-6 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center font-bold text-lg shadow-xs">
+                  <Sliders className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Konfigurasi Engine AI</h3>
+                  <p className="text-xs text-slate-500">Pilih antara Engine Offline Cepat atau Cloud Generative API.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAiProviderModal(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveAiProviderModal} className="p-6 space-y-4">
+              {/* Mode Selection */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-700">Mode Mesin Transformasi</label>
+                <div className="grid grid-cols-1 gap-2">
+                  <label
+                    className={`p-3 rounded-2xl border flex items-start gap-3 cursor-pointer transition-all ${
+                      providerModeInput === "client"
+                        ? "border-violet-500 bg-violet-50/60 ring-2 ring-violet-500/20"
+                        : "border-slate-200 bg-white hover:bg-slate-50"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="ai-mode"
+                      value="client"
+                      checked={providerModeInput === "client"}
+                      onChange={() => setProviderModeInput("client")}
+                      className="mt-0.5 accent-violet-600"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block">
+                        ⚡ Client-Side Neural Shaders (Offline, Cepat & 100% Gratis)
+                      </span>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Memproses foto langsung di komputer booth/kiosk dalam waktu kurang dari 1 detik tanpa perlu koneksi internet ataupun kuota API berbayar.
+                      </p>
+                    </div>
+                  </label>
+
+                  <label
+                    className={`p-3 rounded-2xl border flex items-start gap-3 cursor-pointer transition-all ${
+                      providerModeInput === "custom_webhook"
+                        ? "border-violet-500 bg-violet-50/60 ring-2 ring-violet-500/20"
+                        : "border-slate-200 bg-white hover:bg-slate-50"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="ai-mode"
+                      value="custom_webhook"
+                      checked={providerModeInput === "custom_webhook"}
+                      onChange={() => setProviderModeInput("custom_webhook")}
+                      className="mt-0.5 accent-violet-600"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block">
+                        🌐 Cloud Generative API (SDXL / ControlNet / Webhook)
+                      </span>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Menghubungkan ke API cloud generator (Fal.ai, Replicate, atau server AI kustom) untuk regenerasi gambar tingkat tinggi.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {providerModeInput === "custom_webhook" && (
+                <div className="space-y-3 pt-2 border-t border-slate-100 animate-in fade-in">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-700">API Endpoint URL</label>
+                    <input
+                      type="url"
+                      value={apiEndpointInput}
+                      onChange={(e) => setApiEndpointInput(e.target.value)}
+                      placeholder="https://api.your-ai-worker.com/v1/transform"
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50 font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-700">API Key (Opsional)</label>
+                    <input
+                      type="password"
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      placeholder="sk-..."
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-slate-50 font-mono"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Strength Slider */}
+              <div className="space-y-1 pt-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-700">Intensitas Efek AI:</span>
+                  <span className="font-mono font-bold text-violet-600">{Math.round(strengthInput * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.3"
+                  max="1.0"
+                  step="0.05"
+                  value={strengthInput}
+                  onChange={(e) => setStrengthInput(Number(e.target.value))}
+                  className="w-full accent-violet-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAiProviderModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-bold cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold shadow-md shadow-violet-600/20 cursor-pointer"
+                >
+                  Simpan Pengaturan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ──────────────── MODAL LIVE TEST / UJI COBA EFEK AI ──────────────── */}
+      {showAiTestModal && testingAiEffect && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-3 md:p-6 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-3xl w-full max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center font-bold text-lg shadow-xs">
+                  {testingAiEffect.emoji || "✨"}
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <span>Uji Coba: {testingAiEffect.name}</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
+                      {testingAiEffect.categoryLabel}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Pratinjau transformasi foto real-time menggunakan engine AI yang aktif.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAiTestModal(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {/* Before/After Display Box */}
+              <div className="relative aspect-[4/3] rounded-2xl overflow-hidden bg-slate-950 border border-slate-300 shadow-lg flex items-center justify-center">
+                {isProcessingAiTest ? (
+                  <div className="flex flex-col items-center gap-2 text-white">
+                    <RefreshCw className="w-8 h-8 animate-spin text-violet-400" />
+                    <span className="text-xs font-bold">Memproses Transformasi AI...</span>
+                  </div>
+                ) : (
+                  <img
+                    src={testCompareBefore ? testSourceImg : (testResultImg || testSourceImg)}
+                    alt="AI Test Preview"
+                    className="w-full h-full object-cover transition-all duration-200"
+                  />
+                )}
+
+                {/* State Tag */}
+                <div className="absolute top-3 left-3 px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md text-white text-xs font-bold border border-white/20 flex items-center gap-1.5 shadow-md">
+                  <span>{testingAiEffect.emoji}</span>
+                  <span>{testCompareBefore ? "Foto Asli (Before)" : `Hasil AI (${testingAiEffect.name})`}</span>
+                </div>
+
+                {/* Hold to compare button */}
+                <div className="absolute bottom-3 right-3">
+                  <button
+                    type="button"
+                    onMouseDown={() => setTestCompareBefore(true)}
+                    onMouseUp={() => setTestCompareBefore(false)}
+                    onTouchStart={() => setTestCompareBefore(true)}
+                    onTouchEnd={() => setTestCompareBefore(false)}
+                    className="px-3 py-1.5 rounded-xl bg-black/70 hover:bg-black/90 text-white text-xs font-bold backdrop-blur-md border border-white/20 transition-all cursor-pointer select-none shadow-md flex items-center gap-1.5"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>{testCompareBefore ? "Menampilkan Foto Asli" : "Tahan untuk Foto Asli"}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Effect Prompt & Description */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                  <span>Deskripsi & Karakter Efek:</span>
+                  <span className="text-violet-600 font-mono text-[11px]">{testingAiEffect.shaderType}</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">{testingAiEffect.desc}</p>
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200/80 font-mono text-[11px] text-slate-700 select-all">
+                  <span className="font-bold text-violet-600">Prompt: </span>
+                  {testingAiEffect.prompt}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between shrink-0">
+              <button
+                type="button"
+                onClick={() => runTestAiTransformation(testingAiEffect, testSourceImg)}
+                disabled={isProcessingAiTest}
+                className="px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isProcessingAiTest ? "animate-spin" : ""}`} />
+                <span>Proses Ulang</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAiTestModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-white text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Tutup
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleToggleAiEffect(testingAiEffect.id, true);
+                    setShowAiTestModal(false);
+                  }}
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-violet-600/20 transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Aktifkan Efek Ini di Booth</span>
                 </button>
               </div>
             </div>
