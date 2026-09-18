@@ -17,13 +17,13 @@ export default defineConfig({
         process.env.VITE_SUPABASE_URL || loadedEnv.VITE_SUPABASE_URL || "https://jsbyuegfpbqnaasaqhto.supabase.co"
       ),
       "import.meta.env.VITE_SUPABASE_ANON_KEY": JSON.stringify(
-        process.env.VITE_SUPABASE_ANON_KEY || loadedEnv.VITE_SUPABASE_ANON_KEY || ""
+        process.env.VITE_SUPABASE_ANON_KEY || loadedEnv.VITE_SUPABASE_ANON_KEY || "sb_publishable_zQCeJH6wgK8SkLr7_9Cgug_xyMsEBbN"
       ),
       "import.meta.env.SUPABASE_URL": JSON.stringify(
         process.env.VITE_SUPABASE_URL || loadedEnv.VITE_SUPABASE_URL || "https://jsbyuegfpbqnaasaqhto.supabase.co"
       ),
       "import.meta.env.SUPABASE_ANON_KEY": JSON.stringify(
-        process.env.VITE_SUPABASE_ANON_KEY || loadedEnv.VITE_SUPABASE_ANON_KEY || ""
+        process.env.VITE_SUPABASE_ANON_KEY || loadedEnv.VITE_SUPABASE_ANON_KEY || "sb_publishable_zQCeJH6wgK8SkLr7_9Cgug_xyMsEBbN"
       ),
       "import.meta.env.VITE_XENDIT_SECRET_KEY": JSON.stringify(
         process.env.VITE_XENDIT_SECRET_KEY || loadedEnv.VITE_XENDIT_SECRET_KEY || ""

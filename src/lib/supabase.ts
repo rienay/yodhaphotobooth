@@ -20,7 +20,7 @@ export function getSupabaseAnonKey(): string {
   return (
     import.meta.env.VITE_SUPABASE_ANON_KEY ||
     import.meta.env.SUPABASE_ANON_KEY ||
-    ""
+    "sb_publishable_zQCeJH6wgK8SkLr7_9Cgug_xyMsEBbN"
   );
 }
 
