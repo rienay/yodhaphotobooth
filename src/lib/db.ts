@@ -107,45 +107,70 @@ const localDB = new LocalIndexedDB();
 // -------------------------------------------------------------
 export class TemplateDB {
   /**
-   * Get all templates. Prioritizes Supabase if configured, falls back to IndexedDB.
+   * Get all templates. Prioritizes local cache for instant 0ms rendering,
+   * while revalidating with Supabase in the background.
    */
   async getAllTemplates(): Promise<CustomTemplate[]> {
+    const localCached = await localDB.getAll();
+
+    // If Supabase is configured, sync in background or fetch if cache is empty
     if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data, error } = await supabase
+      if (!localCached || localCached.length === 0) {
+        // Cold start (no cache): wait for Supabase
+        try {
+          const { data, error } = await supabase
+            .from("photobooth_templates")
+            .select("*")
+            .order("created_at", { ascending: false });
+
+          if (!error && data) {
+            const templates: CustomTemplate[] = data.map((item: any) => ({
+              id: item.id,
+              name: item.name,
+              layout: item.layout,
+              img: item.img,
+              isCustom: true,
+              enabled: item.enabled ?? true,
+              presetId: item.preset_id ?? "",
+              photoBoxes: item.photo_boxes || item.photoBoxes || undefined,
+            }));
+
+            for (const t of templates) {
+              localDB.put(t).catch(() => {});
+            }
+            return templates;
+          }
+        } catch (err) {
+          console.warn("Supabase templates error:", err);
+        }
+      } else {
+        // Cache exists: Return immediately (instant UI) and sync remote in background
+        supabase
           .from("photobooth_templates")
           .select("*")
-          .order("created_at", { ascending: false });
-
-        if (!error && data) {
-          const templates: CustomTemplate[] = data.map((item: any) => ({
-            id: item.id,
-            name: item.name,
-            layout: item.layout,
-            img: item.img,
-            isCustom: true,
-            enabled: item.enabled ?? true,
-            presetId: item.preset_id ?? "",
-            photoBoxes: item.photo_boxes || item.photoBoxes || undefined,
-          }));
-
-          // Sync back to local IndexedDB for fast cache / offline support
-          for (const t of templates) {
-            localDB.put(t).catch(() => {});
-          }
-
-          return templates;
-        }
-        if (error) {
-          console.warn("Supabase fetch templates warning, using local cache:", error.message);
-        }
-      } catch (err) {
-        console.warn("Supabase templates error:", err);
+          .order("created_at", { ascending: false })
+          .then(({ data, error }) => {
+            if (!error && data) {
+              for (const item of data) {
+                localDB.put({
+                  id: item.id,
+                  name: item.name,
+                  layout: item.layout,
+                  img: item.img,
+                  isCustom: true,
+                  enabled: item.enabled ?? true,
+                  presetId: item.preset_id ?? "",
+                  photoBoxes: item.photo_boxes || item.photoBoxes || undefined,
+                }).catch(() => {});
+              }
+            }
+          })
+          .catch(() => {});
+        return localCached;
       }
     }
 
-    // Fallback to IndexedDB
-    return await localDB.getAll();
+    return localCached || [];
   }
 
   /**

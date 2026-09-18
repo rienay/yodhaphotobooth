@@ -473,6 +473,34 @@ export function AdminScreen({
     return parsed < 1.0 ? 1.0 : parsed;
   });
 
+  // Electron Desktop state
+  const isElectron = typeof window !== "undefined" && !!window.electronAPI?.isElectron;
+  const [electronPrinters, setElectronPrinters] = useState<{ name: string; displayName: string; isDefault: boolean }[]>([]);
+  const [selectedPrinter, setSelectedPrinter] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem("yodha_selected_printer") || "";
+  });
+  const [localPhotoDir, setLocalPhotoDir] = useState<string>("");
+  const [isKioskActive, setIsKioskActive] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.electronAPI?.isElectron) {
+      window.electronAPI.getPrinters().then((prts) => {
+        setElectronPrinters(prts);
+        if (!localStorage.getItem("yodha_selected_printer")) {
+          const def = prts.find((p) => p.isDefault);
+          if (def) {
+            setSelectedPrinter(def.name);
+            localStorage.setItem("yodha_selected_printer", def.name);
+          }
+        }
+      }).catch(console.error);
+
+      window.electronAPI.getStoragePath().then(setLocalPhotoDir).catch(console.error);
+      window.electronAPI.isKiosk().then(setIsKioskActive).catch(console.error);
+    }
+  }, []);
+
   // Database status
   const [dbConfigured, setDbConfigured] = useState<boolean>(isSupabaseConfigured());
   const [dbTestResult, setDbTestResult] = useState<{ testing: boolean; message: string; success?: boolean }>({
@@ -5122,6 +5150,109 @@ export function AdminScreen({
                     ))}
                   </div>
                 </div>
+              </div>
+
+              {/* ──────────────── KARTU KONFIGURASI PRINTER & DESKTOP (ELECTRON) ──────────────── */}
+              <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-6 space-y-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Printer className="w-5 h-5 text-blue-600" />
+                      <h3 className="text-base font-bold text-slate-900">Aplikasi Desktop & Printer Fisik (Electron)</h3>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Kelola printer foto fisik, silent printing otomatis tanpa pop-up dialog, dan backup penyimpanan foto lokal.
+                    </p>
+                  </div>
+                  <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1.5 ${
+                    isElectron
+                      ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                      : "bg-slate-100 text-slate-600 border border-slate-200"
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${isElectron ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
+                    {isElectron ? "Desktop Mode Aktif" : "Browser Web Mode"}
+                  </span>
+                </div>
+
+                {isElectron ? (
+                  <div className="space-y-4">
+                    {/* Printer Selection */}
+                    <div className="space-y-2">
+                      <label className="block text-xs font-semibold text-slate-700">Pilih Printer Cetak Foto (Silent Print)</label>
+                      <select
+                        value={selectedPrinter}
+                        onChange={(e) => {
+                          setSelectedPrinter(e.target.value);
+                          localStorage.setItem("yodha_selected_printer", e.target.value);
+                        }}
+                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                      >
+                        <option value="">Printer Default Sistem Windows</option>
+                        {electronPrinters.map((prt) => (
+                          <option key={prt.name} value={prt.name}>
+                            {prt.displayName || prt.name} {prt.isDefault ? "(Default Windows)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-slate-500">
+                        Foto akan langsung otomatis keluar dari printer yang dipilih tanpa memunculkan jendela dialog cetak lagi.
+                      </p>
+                    </div>
+
+                    {/* Local Storage Directory & Kiosk controls */}
+                    <div className="pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                        <span className="text-xs font-bold text-slate-800 block">📁 Penyimpanan Backup Foto Lokal</span>
+                        <p className="text-[11px] font-mono text-slate-600 truncate" title={localPhotoDir}>
+                          {localPhotoDir || "C:\\Photobooth\\Photos"}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => window.electronAPI?.openStorageFolder()}
+                          className="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 cursor-pointer transition-all flex items-center gap-1.5 shadow-xs"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" /> Buka Folder Foto di PC
+                        </button>
+                      </div>
+
+                      <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                        <span className="text-xs font-bold text-slate-800 block">🖥️ Mode Kiosk (Layar Kunci)</span>
+                        <p className="text-[11px] text-slate-500">
+                          {isKioskActive
+                            ? "Kiosk aktif (Fullscreen penuh, pelanggan tidak bisa keluar)."
+                            : "Kiosk nonaktif (Layar jendela biasa). Tekan F11 untuk shortcut."}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const next = await window.electronAPI?.toggleKiosk();
+                            setIsKioskActive(!!next);
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 shadow-xs ${
+                            isKioskActive
+                              ? "bg-amber-600 hover:bg-amber-700 text-white"
+                              : "bg-blue-600 hover:bg-blue-700 text-white"
+                          }`}
+                        >
+                          <Monitor className="w-3.5 h-3.5" />
+                          {isKioskActive ? "Keluar Kiosk Mode" : "Aktifkan Kiosk Mode"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-slate-50 border border-dashed border-slate-300 rounded-xl space-y-2">
+                    <p className="text-xs font-semibold text-slate-700">
+                      ℹ️ Anda sedang membuka halaman ini lewat Browser Web.
+                    </p>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Untuk menjalankan photobooth dengan fitur <strong>Silent Print otomatis tanpa pop-up dialog</strong> dan <strong>True Kiosk Mode</strong>, jalankan Yodha Photobooth lewat aplikasi Desktop Electron:
+                    </p>
+                    <div className="bg-slate-900 text-emerald-400 p-2.5 rounded-lg font-mono text-[11px]">
+                      npm run electron:dev
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

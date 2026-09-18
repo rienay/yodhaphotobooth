@@ -264,6 +264,15 @@ function Photobooth() {
       const customTemplates = await templateDB.getAllTemplates();
       const all = [...defaults, ...customTemplates];
       setTemplates(all);
+
+      // Pre-decode template images in memory for instant 0ms appearance
+      all.forEach((t) => {
+        if (t.img) {
+          const preImg = new Image();
+          preImg.src = t.img;
+        }
+      });
+
       if (all.length > 0) {
         setVariant((currentVariant) => {
           const exists = all.some((t) => (t.id === currentVariant || t.presetId === currentVariant) && t.enabled);
@@ -1005,13 +1014,23 @@ function FrameScreen({
                       )}
 
                       {t.img ? (
-                        <img
-                          src={t.img}
-                          className="h-[155px] sm:h-[165px] w-auto max-w-full object-contain pointer-events-none select-none block"
-                          alt={t.name}
-                          loading="lazy"
-                          decoding="async"
-                        />
+                        <div className="relative flex items-center justify-center min-h-[155px]">
+                          {/* Subtle photo slot pattern behind transparent holes so empty holes don't look blank */}
+                          <div
+                            className="absolute inset-0 opacity-10 pointer-events-none rounded"
+                            style={{
+                              backgroundImage: "radial-gradient(#2D233E 1.2px, transparent 1.2px)",
+                              backgroundSize: "8px 8px",
+                            }}
+                          />
+                          <img
+                            src={t.img}
+                            className="h-[155px] sm:h-[165px] w-auto max-w-full object-contain pointer-events-none select-none block relative z-10"
+                            alt={t.name}
+                            loading="eager"
+                            decoding="async"
+                          />
+                        </div>
                       ) : (
                         <div className="w-[105px] h-[155px] sm:h-[165px] bg-white flex flex-col justify-around p-1 gap-0.5">
                           {Array.from({ length: LAYOUTS.find((l) => l.id === selectedLayout)?.totalPhotos ?? 1 }).map((_, i) => (
@@ -1443,9 +1462,11 @@ function ShootScreen({
     templates.find(t => t.layout === layout) ||
     templates[0];
   const layoutConfig = LAYOUTS.find((l) => l.id === layout) || LAYOUTS[0];
-  const total = (activeTemplate?.photoBoxes && activeTemplate.photoBoxes.length > 0)
-    ? activeTemplate.photoBoxes.length
-    : layoutConfig.totalPhotos;
+  const total = layout === "4x2"
+    ? (layoutConfig.totalPhotos || 4)
+    : (activeTemplate?.photoBoxes && activeTemplate.photoBoxes.length > 0)
+      ? activeTemplate.photoBoxes.length
+      : layoutConfig.totalPhotos;
   const effectivePreset = activeTemplate?.presetId || variant;
   const variantConfig = getVariantHoleConfig(layout, effectivePreset);
   // All frames now stored directly in template img field; no legacy fallback needed
@@ -2834,6 +2855,15 @@ function ResultScreen({
         });
         if (active) setUploadStatus("demo");
       }
+
+      // 3. Save photo backup locally to disk if running in Electron Desktop App
+      if (typeof window !== "undefined" && window.electronAPI?.isElectron && strip) {
+        window.electronAPI.savePhotoLocal({
+          base64Data: strip,
+          filename: `${sessionCode || Date.now()}_strip.jpg`,
+          subFolder: new Date().toISOString().split("T")[0],
+        }).catch((err) => console.warn("Electron local photo backup warning:", err));
+      }
     }
 
     uploadAndPersist();
@@ -2907,6 +2937,77 @@ function ResultScreen({
           </div>
         `;
       }
+    }
+
+    // If running in Electron Desktop App, execute silent print directly without browser dialog
+    if (typeof window !== "undefined" && window.electronAPI?.isElectron) {
+      const fullHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <style>
+            @page {
+              size: ${sheetWidth}cm ${sheetHeight}cm;
+              margin: 0;
+            }
+            html, body {
+              margin: 0;
+              padding: 0;
+              background: #fff;
+              width: 100%;
+              height: 100%;
+            }
+            .page {
+              width: 100%;
+              height: 100%;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              page-break-after: always;
+              break-after: page;
+            }
+            .page:last-child {
+              page-break-after: avoid;
+              break-after: avoid;
+            }
+            .print-container {
+              width: ${sheetWidth}cm;
+              height: ${sheetHeight}cm;
+              display: flex;
+              flex-direction: row;
+              align-items: center;
+              justify-content: center;
+              box-sizing: border-box;
+              padding: 0.25cm;
+            }
+            img {
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+          </style>
+        </head>
+        <body>
+          ${pagesContent}
+        </body>
+        </html>
+      `;
+      const selectedPrinter = localStorage.getItem("yodha_selected_printer") || undefined;
+      window.electronAPI.printSilent({
+        html: fullHtml,
+        printerName: selectedPrinter,
+        copies: 1,
+      }).then((res) => {
+        URL.revokeObjectURL(blobUrl);
+        if (res.success) {
+          console.log("[Electron] Silent print succeeded without dialog");
+        } else {
+          console.warn("[Electron] Silent print issue, fallback:", res.failureReason || res.error);
+        }
+      }).catch((e) => {
+        console.warn("[Electron] Print error:", e);
+      });
+      return;
     }
 
     // Create container element in the main document for printing

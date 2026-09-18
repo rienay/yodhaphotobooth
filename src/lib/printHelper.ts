@@ -88,6 +88,74 @@ export async function printPhotoStrip(
     }
   }
 
+  // If running inside Electron Desktop App, execute silent print directly
+  if (typeof window !== "undefined" && window.electronAPI?.isElectron) {
+    const fullHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <style>
+          @page {
+            size: ${sheetWidth}cm ${sheetHeight}cm;
+            margin: 0;
+          }
+          html, body {
+            margin: 0;
+            padding: 0;
+            background: #fff;
+            width: 100%;
+            height: 100%;
+          }
+          .page {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            page-break-after: always;
+            break-after: page;
+          }
+          .page:last-child {
+            page-break-after: avoid;
+            break-after: avoid;
+          }
+          .print-container {
+            width: ${sheetWidth}cm;
+            height: ${sheetHeight}cm;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            padding: 0.25cm;
+          }
+          img {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+        </style>
+      </head>
+      <body>
+        ${pagesContent}
+      </body>
+      </html>
+    `;
+    const selectedPrinter = localStorage.getItem("yodha_selected_printer") || undefined;
+    const res = await window.electronAPI.printSilent({
+      html: fullHtml,
+      printerName: selectedPrinter,
+      copies: 1,
+    });
+    if (blobUrl && blobUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(blobUrl);
+    }
+    if (res.success) {
+      return;
+    }
+    console.warn("Electron silent print failed, falling back to browser print:", res.failureReason || res.error);
+  }
+
   // Remove existing print container and style if any
   const existingSection = document.getElementById("yodha-print-section");
   if (existingSection) existingSection.remove();
