@@ -1161,6 +1161,23 @@ export function AdminScreen({
     setTimeout(() => setActionStatus(""), 3500);
   };
 
+  const handleClearAllSessions = async () => {
+    if (!window.confirm("Apakah Anda yakin ingin menghapus SEMUA foto riwayat sesi? Foto yang dihapus tidak dapat dipulihkan.")) return;
+    setLoadingSessions(true);
+    try {
+      await sessionDB.clearAllSessions();
+      const fresh = await sessionDB.getRecentSessions(50);
+      setRecentSessions(fresh);
+      setActionStatus("Semua foto riwayat sesi berhasil dibersihkan.");
+      setTimeout(() => setActionStatus(""), 3500);
+    } catch (e) {
+      console.error(e);
+      setActionStatus("Gagal menghapus riwayat sesi.");
+    } finally {
+      setLoadingSessions(false);
+    }
+  };
+
   // ── Financial / Keuangan Handlers ──
   const loadFinanceTransactions = async () => {
     setFinanceLoading(true);
@@ -3668,7 +3685,18 @@ export function AdminScreen({
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleClearAllSessions}
+                    disabled={loadingSessions || recentSessions.length === 0}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-semibold hover:bg-red-100 transition-colors cursor-pointer disabled:opacity-50"
+                    title="Hapus seluruh foto riwayat sesi sekaligus"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                    <span>Hapus Semua Foto</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={async () => {
@@ -3687,7 +3715,7 @@ export function AdminScreen({
                     className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-colors cursor-pointer"
                     title="Pindai dan hapus foto yang sudah lewat dari 30 hari"
                   >
-                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                    <Clock className="w-3.5 h-3.5 text-slate-500" />
                     <span>Bersihkan &gt; 30 Hari</span>
                   </button>
 
@@ -3710,7 +3738,7 @@ export function AdminScreen({
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
                   {recentSessions.map((s, idx) => (
-                    <div key={s.id || idx} className="bg-white rounded-2xl border border-slate-200/80 p-4 space-y-3 shadow-xs">
+                    <div key={s.id || idx} className="bg-white rounded-2xl border border-slate-200/80 p-4 space-y-3 shadow-xs relative group">
                       <div className="aspect-[2/3] bg-slate-100 rounded-xl overflow-hidden flex items-center justify-center relative">
                         {s.strip_url ? (
                           <img src={s.strip_url} alt="Strip foto" className="w-full h-full object-contain" />
@@ -3722,6 +3750,14 @@ export function AdminScreen({
                             GIF
                           </span>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSessionItem(s)}
+                          className="absolute top-2 left-2 p-1.5 bg-black/60 hover:bg-red-600 text-white rounded-lg transition-colors cursor-pointer opacity-80 group-hover:opacity-100"
+                          title="Hapus foto ini"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
 
                       <div>
@@ -3762,14 +3798,25 @@ export function AdminScreen({
                             </a>
                           )}
                         </div>
-                        <a
-                          href={`/?session=${s.session_code}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="w-full text-center py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[11px] font-semibold transition-all border border-slate-200/80"
-                        >
-                          Buka Portal Pengunjung ↗
-                        </a>
+                        <div className="flex items-center gap-1.5">
+                          <a
+                            href={`/?session=${s.session_code}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex-1 text-center py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[11px] font-semibold transition-all border border-slate-200/80"
+                          >
+                            Buka Portal ↗
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSessionItem(s)}
+                            className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-[11px] font-semibold transition-all border border-red-200/80 flex items-center justify-center gap-1 cursor-pointer"
+                            title="Hapus foto sesi ini"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Hapus</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}

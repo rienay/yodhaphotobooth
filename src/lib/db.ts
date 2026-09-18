@@ -384,6 +384,23 @@ export class SessionDB {
     } catch {}
   }
 
+  async clearAllSessions(): Promise<void> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        await supabase
+          .from("photobooth_sessions")
+          .delete()
+          .not("session_code", "is", null);
+      } catch (err) {
+        console.warn("Failed clearing all sessions from Supabase:", err);
+      }
+    }
+
+    try {
+      localStorage.removeItem(this.localKey);
+    } catch {}
+  }
+
   /**
    * Automatically delete sessions older than retentionDays (default 30 days)
    * Deletes from both Supabase photobooth_sessions and localStorage cache
