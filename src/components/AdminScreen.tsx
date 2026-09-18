@@ -3741,7 +3741,13 @@ export function AdminScreen({
                     <div key={s.id || idx} className="bg-white rounded-2xl border border-slate-200/80 p-4 space-y-3 shadow-xs relative group">
                       <div className="aspect-[2/3] bg-slate-100 rounded-xl overflow-hidden flex items-center justify-center relative">
                         {s.strip_url ? (
-                          <img src={s.strip_url} alt="Strip foto" className="w-full h-full object-contain" />
+                          <img
+                            src={s.strip_url}
+                            alt="Strip foto"
+                            loading="lazy"
+                            decoding="async"
+                            className="w-full h-full object-contain"
+                          />
                         ) : (
                           <span className="text-xs text-slate-400">Tidak ada gambar</span>
                         )}

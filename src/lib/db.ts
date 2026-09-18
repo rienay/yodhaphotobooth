@@ -325,11 +325,16 @@ export class SessionDB {
       }
     }
 
-    // Always cache in localStorage for instant access
+    // Always cache in localStorage for instant access (keep payload lightweight)
     try {
       const existing: PhotoboothSession[] = JSON.parse(localStorage.getItem(this.localKey) || "[]");
-      existing.unshift(sessionData);
-      localStorage.setItem(this.localKey, JSON.stringify(existing.slice(0, 50)));
+      const cachedSession: PhotoboothSession = {
+        ...sessionData,
+        live_videos: [], // Don't bloat local cache with raw video blobs
+        raw_photos: (sessionData.raw_photos || []).slice(0, 2),
+      };
+      existing.unshift(cachedSession);
+      localStorage.setItem(this.localKey, JSON.stringify(existing.slice(0, 25)));
     } catch (e) {
       // Ignore localStorage quotas
     }

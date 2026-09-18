@@ -2,6 +2,11 @@ const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
+// Enable hardware acceleration for smooth camera rendering and UI
+app.commandLine.appendSwitch("enable-gpu-rasterization");
+app.commandLine.appendSwitch("enable-zero-copy");
+app.commandLine.appendSwitch("ignore-gpu-blocklist");
+
 let mainWindow = null;
 
 // Determine storage path for local photo backups
