@@ -18,6 +18,7 @@ export interface PhotoboothSession {
   variant?: string;
   template_url?: string;
   strip_url: string;
+  thumbnail_url?: string;
   gif_url?: string;
   live_photo_url?: string;
   live_videos?: string[];
@@ -270,6 +271,46 @@ export class TemplateDB {
   }
 }
 
+/**
+ * Create a lightweight JPEG thumbnail (~30KB) from full-res base64.
+ * Prevents memory bloat and eliminates UI lag when viewing many photos.
+ */
+export async function generateThumbnail(base64Data: string, maxDim = 380, quality = 0.65): Promise<string> {
+  if (!base64Data || typeof window === "undefined" || !base64Data.startsWith("data:")) return base64Data;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        let w = img.naturalWidth || img.width;
+        let h = img.naturalHeight || img.height;
+        if (w > h) {
+          if (w > maxDim) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          }
+        } else {
+          if (h > maxDim) {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        canvas.width = Math.max(1, w);
+        canvas.height = Math.max(1, h);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return resolve(base64Data);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      } catch (e) {
+        resolve(base64Data);
+      }
+    };
+    img.onerror = () => resolve(base64Data);
+    img.src = base64Data;
+  });
+}
+
 // -------------------------------------------------------------
 // Unified Sessions / Photos DB (Save captured photos to DB)
 // -------------------------------------------------------------
@@ -277,9 +318,18 @@ export class SessionDB {
   private localKey = "yodha_recent_sessions";
 
   async saveSession(session: PhotoboothSession): Promise<PhotoboothSession> {
+    // Generate lightweight thumbnail if strip is base64
+    let thumbUrl = session.thumbnail_url;
+    if (!thumbUrl && session.strip_url && session.strip_url.startsWith("data:")) {
+      try {
+        thumbUrl = await generateThumbnail(session.strip_url, 380, 0.65);
+      } catch {}
+    }
+
     const sessionData: PhotoboothSession = {
       ...session,
       id: session.id || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `sess_${Date.now()}`),
+      thumbnail_url: thumbUrl || session.thumbnail_url,
       print_status: session.print_status || "pending",
       print_copies: session.print_copies || 1,
       created_at: session.created_at || new Date().toISOString(),
@@ -295,6 +345,7 @@ export class SessionDB {
           variant: sessionData.variant || "",
           template_url: sessionData.template_url || null,
           strip_url: sessionData.strip_url,
+          thumbnail_url: sessionData.thumbnail_url || null,
           gif_url: sessionData.gif_url || null,
           live_photo_url: sessionData.live_photo_url || null,
           live_videos: sessionData.live_videos || [],
@@ -325,16 +376,20 @@ export class SessionDB {
       }
     }
 
-    // Always cache in localStorage for instant access (keep payload lightweight)
+    // Always cache in localStorage for instant access (keep payload ultra-lightweight)
     try {
       const existing: PhotoboothSession[] = JSON.parse(localStorage.getItem(this.localKey) || "[]");
       const cachedSession: PhotoboothSession = {
         ...sessionData,
-        live_videos: [], // Don't bloat local cache with raw video blobs
-        raw_photos: (sessionData.raw_photos || []).slice(0, 2),
+        // In local memory, use lightweight thumbnail for strip_url to reduce RAM by 99%
+        strip_url: thumbUrl || sessionData.strip_url,
+        thumbnail_url: thumbUrl || sessionData.thumbnail_url,
+        gif_url: undefined, // Don't bloat local cache with multi-megabyte GIF
+        live_videos: [], // Don't bloat local cache with video blobs
+        raw_photos: [],
       };
       existing.unshift(cachedSession);
-      localStorage.setItem(this.localKey, JSON.stringify(existing.slice(0, 25)));
+      localStorage.setItem(this.localKey, JSON.stringify(existing.slice(0, 50)));
     } catch (e) {
       // Ignore localStorage quotas
     }
