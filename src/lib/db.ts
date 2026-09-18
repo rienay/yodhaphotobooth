@@ -345,15 +345,11 @@ export class SessionDB {
           variant: sessionData.variant || "",
           template_url: sessionData.template_url || null,
           strip_url: sessionData.strip_url,
-          thumbnail_url: sessionData.thumbnail_url || null,
           gif_url: sessionData.gif_url || null,
           live_photo_url: sessionData.live_photo_url || null,
           live_videos: sessionData.live_videos || [],
           raw_photos: sessionData.raw_photos || [],
           total_photos: sessionData.total_photos || 0,
-          print_status: sessionData.print_status,
-          print_copies: sessionData.print_copies,
-          printed_at: sessionData.printed_at || null,
           created_at: sessionData.created_at,
         };
         if (isUuid) {
@@ -367,12 +363,12 @@ export class SessionDB {
           .single();
 
         if (error) {
-          console.warn("Supabase save session warning:", error.message, error.details);
+          console.error("Supabase save session error:", error.message, error.details);
         } else if (data) {
           sessionData.id = data.id;
         }
       } catch (err) {
-        console.warn("Failed to save session to Supabase:", err);
+        console.error("Failed to save session to Supabase:", err);
       }
     }
 
@@ -404,6 +400,10 @@ export class SessionDB {
         delete updatePayload.id;
         delete updatePayload.session_code;
         delete updatePayload.created_at;
+        delete updatePayload.thumbnail_url;
+        delete updatePayload.print_status;
+        delete updatePayload.print_copies;
+        delete updatePayload.printed_at;
 
         await supabase
           .from("photobooth_sessions")
